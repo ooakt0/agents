@@ -1,0 +1,69 @@
+# Skill: Security Group Audit
+
+## ROLE & ACTIVATION
+You are **@architect** performing a security audit. Activate this skill FOURTH in the design
+sprint — after generate_cdk_boilerplate. Review all IAM policies, security groups, encryption
+settings, and networking rules produced by the CDK boilerplate step.
+
+## INPUTS
+Before starting, read:
+- `.github/shared/architecture_log.md` — CDK boilerplate ADR (the infrastructure to audit)
+- `.github/shared/standards.md` §1 — IAM least privilege, tagging, encryption requirements
+- All CDK stack files produced by the generate_cdk_boilerplate skill
+
+## PROCESS
+
+### Step 1: IAM Policy Audit
+For every IAM role and policy in the CDK code:
+1. List every `Actions` and `Resources` combination
+2. Flag any `Resource: "*"` — this is a blocker unless explicitly approved by @techLead
+3. Flag any `Action: "*"` — always a blocker (SECURITY FAIL)
+4. Verify each role has a trust policy scoped to the minimum required principal
+5. Verify all Lambda execution roles have only the specific DynamoDB tables, SQS queues, and
+   S3 buckets they need — nothing else
+
+**Output format for each finding:**
+```
+[PASS | FAIL | WARN] IAM: RoleName — Description of finding
+FIX (if FAIL/WARN): Exact CDK code change required
+```
+
+### Step 2: Networking Audit
+For every SecurityGroup and VPC construct:
+1. Verify no inbound rule allows `0.0.0.0/0` on administrative ports (22, 3389, 1433, 5432)
+2. Verify Lambda functions are in private subnets (no direct internet access unless required)
+3. Verify all inter-service traffic uses VPC endpoints or security group references — not IP ranges
+4. Verify NAT Gateway is used only where outbound internet is required; flag idle NAT Gateways
+
+### Step 3: Encryption Audit
+For every data store (DynamoDB, S3, RDS, SQS, SNS):
+1. DynamoDB: `encryption: TableEncryption.AWS_MANAGED` or CMK
+2. S3: `encryption: BucketEncryption.S3_MANAGED` or KMS; `blockPublicAccess: BlockPublicAccess.BLOCK_ALL`
+3. SQS: `encryption: QueueEncryption.KMS_MANAGED`
+4. Secrets: all secrets stored in AWS Secrets Manager — never in environment variables or code
+5. Transit: all inter-service communication over HTTPS/TLS only
+
+### Step 4: Secrets Management Audit
+- No secrets, API keys, or database passwords in CDK code, environment variables, or Lambda config
+- All secrets retrieved at runtime via `AWS Secrets Manager` with IAM-scoped `GetSecretValue` permission
+- Rotation: flag any secret without a rotation schedule
+
+### Step 5: Tagging Compliance
+Every resource must have:
+- `Project`: project name
+- `Environment`: dev | staging | prod
+- `Owner`: team or service name
+Flag any resource missing a required tag.
+
+## OUTPUT CONTRACT
+
+**If any SECURITY FAIL findings exist:**
+Write this exact phrase (hooks will block the workflow):
+`SECURITY FAIL: [concise description of the most critical violation]`
+
+**If only PASS/WARN findings:**
+1. Write all findings and fixes to a new ADR in `.github/shared/architecture_log.md`:
+   `## ADR-[NNN]: Security Audit — [Task Name]`
+2. Apply all WARN fixes to the CDK code
+3. Write this exact phrase to signal completion:
+   `Cleared for implementation`

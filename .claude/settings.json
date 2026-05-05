@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -ExecutionPolicy Bypass -File .github/hooks/on_write.ps1"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -ExecutionPolicy Bypass -File .github/hooks/on_task_complete.ps1"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -ExecutionPolicy Bypass -File .github/hooks/on_stop.ps1"
+          }
+        ]
+      }
+    ]
+  },
+  "skills": {
+    "directory": ".claude/skills",
+    "autoLoad": false
+  },
+  "sharedState": {
+    "projectState": ".github/shared/project_state.md",
+    "standards": ".github/shared/standards.md",
+    "architectureLog": ".github/shared/architecture_log.md"
+  }
+}
