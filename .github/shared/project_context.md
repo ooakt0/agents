@@ -1,119 +1,140 @@
-# 📦 Project Context
+# Project Context
 **Owner:** @techLead | **Last Updated:** [YYYY-MM-DD] | **Updated By:** [agent or user]
 
-> **PURPOSE:** This file is the single source of project knowledge for all agents.
-> Read this file FIRST — before scanning any project files or reading any other shared files.
-> This eliminates token-burning reconnaissance on every agent activation.
+> **PURPOSE:** Single source of truth for all agents. Read this file FIRST — before any project file scan or cross-referencing other shared files. An agent that makes assumptions without reading this file is operating with incomplete context.
 >
-> **@techLead:** Populate this at `INIT_PROJECT`. Update it at every major milestone.
-> If this file does not exist in a real project, create it before issuing any `DELEGATE`.
+> **@techLead:** Populate at `INIT_PROJECT`. Update at every major milestone and after every `deployment_verification` PASS. No `DELEGATE` is issued until this file exists and is accurate.
 
 ---
 
 ## Project Overview
-<!-- What is this project? Who uses it? What problem does it solve?
-     Keep to 3-5 sentences. Agents use this to understand domain context. -->
 
 - **Name:** [Project name]
-- **Purpose:** [One-sentence purpose]
-- **Description:** [2-4 sentences: what it does, who uses it, why it exists]
-- **Stage:** [Greenfield | Active development | Maintenance | Legacy]
+- **Purpose:** [One-sentence purpose — what problem does it solve for whom?]
+- **Description:** [3-5 sentences: what it does, who uses it, business domain, why it exists now]
+- **Stage:** [Greenfield | Active development | Maintenance | Legacy migration]
+- **SLA target:** [e.g., 99.9% availability, < 500 ms P99 on /checkout]
+- **RTO / RPO:** [e.g., RTO 1 h / RPO 15 min — documented in ADR-NNN]
 
 ---
 
 ## Tech Stack
-<!-- List every language, framework, runtime, and tooling decision.
-     @codeCrafter reads this to select the right implement_logic.md section.
-     @architect reads this to ensure CDK stacks match the runtime. -->
+<!-- @codeCrafter reads this to select the correct implement_logic.md language section.
+     @architect reads this to ensure CDK stacks match the runtime and DB choice. -->
 
 | Layer | Technology | Version | Notes |
 |---|---|---|---|
 | Language | [e.g. TypeScript / Python / Java] | [e.g. 5.x / 3.12 / 21] | [strict mode / PEP 484 / etc.] |
-| Runtime | [e.g. Node.js / Lambda Python / Spring Boot] | [version] | |
-| UI Framework | [e.g. React / Next.js / Angular / None] | [version] | |
-| IaC | [e.g. AWS CDK v2 TypeScript] | [version] | |
-| Test Framework | [e.g. Jest / pytest / JUnit 5] | [version] | |
-| DB / Storage | [e.g. DynamoDB / RDS PostgreSQL / S3] | | |
-| Other | [e.g. Artillery, LocalStack, pip-audit] | | |
+| Runtime | [e.g. Node.js 22.x Lambda / Spring Boot 3] | [version] | [e.g. arm64, 512 MB] |
+| UI Framework | [e.g. Next.js App Router / Angular 17 / None] | [version] | |
+| IaC | AWS CDK v2 TypeScript | [version] | [cdk-nag AwsSolutionsChecks enabled] |
+| Test — Unit | [e.g. Jest 29 / pytest 8 / JUnit 5] | [version] | |
+| Test — Integration | [e.g. LocalStack / moto] | [version] | |
+| Test — Load | Artillery | [version] | [SLO: P99 < 1000 ms] |
+| DB / Storage | [e.g. DynamoDB on-demand / RDS PostgreSQL 16] | | [PITR enabled in prod] |
+| Event Bus | [e.g. EventBridge custom bus / SQS FIFO] | | |
+| Auth | [e.g. Amazon Cognito User Pool / JWT RS256] | | |
+| Observability | CloudWatch Logs + X-Ray + custom alarms | | [structured JSON logs] |
+| Security scanning | [e.g. npm audit / pip audit / trivy] | | [zero high/critical gate] |
 
 ---
 
 ## Directory Structure
-<!-- Top-level dirs only. One line per entry. Agents use this to know where to put files.
-     @codeCrafter uses this to place new modules. @codeReviewer uses it for doc checks. -->
+<!-- Top-level only. @codeCrafter uses this to place new modules.
+     @codeReviewer uses this for documentation checks. -->
 
 ```
 [project-root]/
-  [dir]/           ← [purpose, e.g. "Lambda handlers"]
-  [dir]/           ← [purpose, e.g. "CDK infrastructure stacks"]
-  [dir]/           ← [purpose, e.g. "Shared utilities and error classes"]
-  [dir]/           ← [purpose, e.g. "Unit and integration tests"]
-  [file]           ← [purpose, e.g. "Entry point / main stack"]
+  [dir]/           ← [purpose — e.g. "Lambda handlers, one file per function"]
+  [dir]/           ← [purpose — e.g. "CDK stacks and constructs"]
+  [dir]/           ← [purpose — e.g. "Domain services, error classes, validators"]
+  [dir]/           ← [purpose — e.g. "Unit tests (mirrors src/ structure)"]
+  [dir]/           ← [purpose — e.g. "Integration tests (LocalStack)"]
+  [dir]/           ← [purpose — e.g. "OpenAPI specs and contract fixtures"]
+  [file]           ← [purpose — e.g. "CDK app entry point"]
 ```
 
 ---
 
 ## Key Files & Entry Points
-<!-- The files every agent should know by name, without searching.
-     Include the path and one-line description.
-     @devOps reads this to know which CDK stack to deploy.
-     @codeCrafter reads this to know where to add new logic. -->
+<!-- Files every agent must know without searching.
+     @devOps reads this to identify which CDK stack to deploy.
+     @codeCrafter reads this to know where new logic belongs. -->
 
-| File | Purpose |
-|---|---|
-| `[path/to/file]` | [e.g. Main Lambda handler — entry point for all API Gateway requests] |
-| `[path/to/file]` | [e.g. CDK stack — defines all AWS resources for this service] |
-| `[path/to/file]` | [e.g. Shared error classes — all custom exceptions live here] |
-| `[path/to/file]` | [e.g. Environment variable schema — validated at startup with Zod/pydantic] |
+| File | Purpose | Owner agent |
+|---|---|---|
+| `[path/to/handler.ts]` | Main Lambda handler — entry point for all API Gateway events | @codeCrafter |
+| `[path/to/stack.ts]` | CDK stack — all AWS resources for this service | @architect |
+| `[path/to/errors.ts]` | Domain error class hierarchy — all custom exceptions | @codeCrafter |
+| `[path/to/env.ts]` | Env var schema — validated at startup with Zod / pydantic | @codeCrafter |
+| `[path/to/openapi.yaml]` | OpenAPI 3.1 spec — source of truth for this service's API | @codeReviewer |
+| `.env.example` | Canonical list of required env vars with placeholder values | @techLead |
 
 ---
 
 ## Environment & Config
-<!-- List env var NAMES only — never values or secrets.
-     @devOps uses this to configure pipeline secrets and parameter store paths.
-     @codeCrafter uses this to know which process.env.X names are available. -->
+<!-- Env var NAMES only — never values or secrets.
+     @devOps uses this to configure SSM paths and pipeline secrets.
+     @codeCrafter uses this to know which names to reference in code. -->
 
-| Variable | Used By | Purpose |
-|---|---|---|
-| `[VAR_NAME]` | [service or module] | [what it configures] |
-| `[VAR_NAME]` | | |
+| Variable | Used By | Source | Purpose |
+|---|---|---|---|
+| `[VAR_NAME]` | [handler or service] | [SSM / Secrets Manager / .env] | [what it configures] |
+| `[VAR_NAME]` | | | |
 
-- **Config source:** [e.g. AWS SSM Parameter Store / .env file / Secrets Manager]
-- **Feature flags:** [list any feature flags, or "None"]
+- **Config source:** [e.g. AWS SSM Parameter Store — path prefix `/project/env/`]
+- **Secret source:** [e.g. AWS Secrets Manager — ARN prefix `arn:aws:secretsmanager:...`]
+- **Feature flags:** [list flags, or "None"]
+- **Env promotion:** [e.g. `dev` → `staging` → `prod` — different SSM paths per stage]
 
 ---
 
 ## Integration Boundaries
-<!-- External systems this project talks to. Agents use this to understand blast radius
-     for a change and to correctly mock dependencies in tests.
-     @architect uses this when designing new resources. -->
+<!-- Every external system this project touches. Agents use this to assess blast radius
+     and to mock dependencies correctly in tests.
+     @architect reads this when designing new resources or event contracts. -->
 
-| System | Type | Direction | Notes |
-|---|---|---|---|
-| [e.g. Stripe API] | [External API] | [Outbound] | [e.g. payments module only] |
-| [e.g. DynamoDB bookings table] | [AWS service] | [Read/Write] | [e.g. table name in SSM] |
-| [e.g. SQS booking-dlq] | [AWS service] | [Write on error] | [e.g. max receive count = 3] |
-| [e.g. EventBridge bus] | [AWS service] | [Publish] | [e.g. booking-confirmed events] |
+| System | Type | Direction | Circuit breaker | Mock in tests |
+|---|---|---|---|---|
+| [e.g. Stripe API] | External HTTP | Outbound | Yes — timeout 3 s | `__mocks__/stripe.ts` |
+| [e.g. DynamoDB bookings] | AWS service | Read/Write | N/A | `aws-sdk-client-mock` |
+| [e.g. SQS booking-dlq] | AWS service | Write on error | N/A | `aws-sdk-client-mock` |
+| [e.g. EventBridge default bus] | AWS service | Publish | N/A | `aws-sdk-client-mock` |
+| [e.g. Cognito User Pool] | AWS service | Auth verify | N/A | JWT fixture in tests |
 
 ---
 
 ## Known Constraints
-<!-- Tech debt, off-limits patterns, non-negotiable decisions, critical gotchas.
-     @codeCrafter must read this before writing any code.
-     @codeReviewer uses this as an additional check beyond standards.md. -->
+<!-- Hard technical constraints, off-limits patterns, agreed tech debt, critical gotchas.
+     @codeCrafter MUST read before writing any code.
+     @codeReviewer uses these as additional checks beyond standards.md.
+     Format: constraint — reason — added by — date. -->
 
-- [e.g. Do NOT use DynamoDB scan — all reads must use GSI or table key]
-- [e.g. The payments Lambda must stay under 128 MB memory — do not add heavy deps]
-- [e.g. All public API endpoints require Cognito JWT auth — no unauthenticated routes]
-- [e.g. Node.js runtime only on Lambda — no Python Lambdas in this project]
+- [e.g. No DynamoDB Scan — all reads must use GSI or table key — @architect — 2026-01-15]
+- [e.g. Payments Lambda must stay ≤ 128 MB memory — SLA cost constraint — @techLead — 2026-01-15]
+- [e.g. All public API routes require Cognito JWT — security baseline — ADR-003]
+- [e.g. Node.js runtime only on Lambda — no Python Lambdas — team skill constraint]
+- [e.g. DynamoDB table names injected via env vars — never hardcoded — §2.1 of standards.md]
+
+---
+
+## Threat Model Summary
+<!-- High-level threat surface for this service. @architect populates during security_group_audit.
+     @qualityGuard uses this to scope the penetration_scan. -->
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| [e.g. Unauthorized API access] | [Cognito JWT validation on all routes] | [Mitigated / Open] |
+| [e.g. Secret exfiltration] | [Secrets Manager + no env literals in code] | [Mitigated] |
+| [e.g. Injection via query params] | [Zod schema validation at handler boundary] | [Mitigated] |
+| [e.g. DLQ message replay attack] | [Idempotency key on all processors] | [Mitigated] |
 
 ---
 
 ## Recent Changes
-<!-- Rolling log of the last 5 major changes. @techLead appends after every milestone.
-     @codeCrafter reads this to understand what recently changed context before implementing.
-     Oldest entry is removed when a 6th is added (keep exactly 5). -->
+<!-- Rolling log of the 5 most recent changes. @techLead appends after every deployment_verification PASS
+     or CHANGE_REQUEST resolution. Remove the oldest row when a 6th is added. -->
 
-| Date | Task / CR | Agent Chain | Files Touched | Summary |
+| Date | Task / CR | Agent chain | Files touched | Summary |
 |---|---|---|---|---|
-| [YYYY-MM-DD] | [T-001 / CR-001] | [agents used] | [file list] | [one-line summary] |
+| [YYYY-MM-DD] | [T-001 / CR-001] | [e.g. codeCrafter → codeReviewer → qualityGuard → devOps] | [file list] | [one-line summary] |
