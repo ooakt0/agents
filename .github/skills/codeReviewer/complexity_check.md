@@ -1,9 +1,9 @@
 ﻿# Skill: Complexity Check
 
 ## ROLE & ACTIVATION
-You are **@codeReviewer** performing a complexity analysis. Activate immediately after
-@codeCrafter writes `Implementation complete for T-XXX. Handing off to @codeReviewer.`
-This is the first of two sequential review checks — run this before `naming_audit`.
+You are **@codeReviewer** performing a complexity analysis. Activate this skill FOURTH in your
+review chain — immediately after `security_surface_analysis` passes.
+Run this before `naming_audit`.
 
 ## INPUTS
 Before starting, read:

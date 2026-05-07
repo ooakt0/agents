@@ -69,10 +69,15 @@ User
        │          └─▶ @codeReviewer: "Handing off to @codeReviewer"
        │
        ├─▶ @codeReviewer: REVIEW PHASE
-       │     ├─ complexity_check        (functions ≤30 lines, nesting ≤3 deep)
-       │     ├─ naming_audit            (PascalCase/camelCase/UPPER_SNAKE_CASE enforced)
-       │     ├─ dependency_audit        (staleness, CVE rescan, license drift)
-       │     └─ documentation_check     (README, .env.example, no TODO/FIXME)
+       │     ├─ architectural_alignment_audit  (ADR conformance, service boundaries)
+       │     ├─ breaking_change_detection      (interfaces, API payloads, schemas, events)
+       │     ├─ security_surface_analysis      (authz gaps, PII logs, IAM, injection, secrets)
+       │     ├─ complexity_check               (functions ≤30 lines, nesting ≤3 deep)
+       │     ├─ naming_audit                   (PascalCase/camelCase/UPPER_SNAKE_CASE enforced)
+       │     ├─ performance_regression_check   (N+1, unbounded queries, hot-path allocs)
+       │     ├─ dependency_audit               (staleness, CVE rescan, license drift)
+       │     ├─ testability_maintainability_audit (hardcoded deps, monolithic fns, interfaces)
+       │     └─ documentation_check            (README, .env.example, no TODO/FIXME)
        │          └─▶ @qualityGuard: "Handing off to @qualityGuard"
        │
        ├─▶ @qualityGuard: QUALITY PHASE
@@ -131,7 +136,7 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 
 | Phrase (inter-agent) | Routes to |
 |---|---|
-| `Handing off to @codeReviewer` | @codeReviewer (complexity_check) |
+| `Handing off to @codeReviewer` | @codeReviewer (architectural_alignment_audit) |
 | `Handing off to @qualityGuard` | @qualityGuard (write_unit_tests) |
 | `Handing off to @devOps` | @devOps (pipeline_setup) |
 | `Quality gate cleared` | @techLead (AUDIT_RESULT → delegate devOps) |
@@ -155,7 +160,14 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 | `Resilience patterns complete` | activate performance_optimization |
 | `Performance optimization complete` | activate refactoring_refinement |
 | `Refactoring complete` | hand off to @codeReviewer |
-| `Dependency audit passed` | activate documentation_check |
+| `Architectural alignment audit passed` | activate breaking_change_detection |
+| `Breaking change detection passed` | activate security_surface_analysis |
+| `Security surface analysis passed` | activate complexity_check |
+| `Complexity check passed` | activate naming_audit |
+| `Naming audit passed` | activate performance_regression_check |
+| `Performance regression check passed` | activate dependency_audit |
+| `Dependency audit passed` | activate testability_maintainability_audit |
+| `Testability audit passed` | activate documentation_check |
 | `Integration tests complete` | activate load_test |
 | `Load tests complete` | activate penetration_scan |
 | `Pipeline configured` | activate environment_promotion |
@@ -188,10 +200,15 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 - `.github/skills/codeCrafter/performance_optimization.md` — N+1 fix, pagination, caching, Lambda cold start *(WAF: Performance Efficiency)*
 - `.github/skills/codeCrafter/refactoring_refinement.md` — DRY, SOLID, code smells, design patterns, naming *(WAF: Operational Excellence)*
 
-### @codeReviewer (Review Phase)
+### @codeReviewer (Review Phase) — execution order
+- `.github/skills/codeReviewer/architectural_alignment_audit.md` — ADR conformance, service boundary enforcement, undocumented decisions *(WAF: Operational Excellence)*
+- `.github/skills/codeReviewer/breaking_change_detection.md` — Exported interface diffs, API payload changes, schema migrations, event contract changes *(WAF: Reliability)*
+- `.github/skills/codeReviewer/security_surface_analysis.md` — Authorization gaps, PII in logs, IAM least privilege, injection surface, secrets *(WAF: Security)*
 - `.github/skills/codeReviewer/complexity_check.md` — Function size, nesting depth, promise chains
 - `.github/skills/codeReviewer/naming_audit.md` — PascalCase / camelCase / UPPER_SNAKE_CASE enforcement
+- `.github/skills/codeReviewer/performance_regression_check.md` — N+1 queries, unbounded results, hot-path allocations, Lambda cold start, cache misses *(WAF: Performance Efficiency)*
 - `.github/skills/codeReviewer/dependency_audit.md` — Staleness, CVE rescan, GPL license drift *(WAF: Security)*
+- `.github/skills/codeReviewer/testability_maintainability_audit.md` — Hardcoded deps, static I/O, monolithic functions, interface coverage, fixture burden *(WAF: Operational Excellence)*
 - `.github/skills/codeReviewer/documentation_check.md` — README, .env.example, no TODO/FIXME *(WAF: Operational Excellence)*
 
 ### @qualityGuard (Quality Phase)

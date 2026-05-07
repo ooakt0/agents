@@ -1,9 +1,9 @@
 ﻿# Skill: Naming Audit
 
 ## ROLE & ACTIVATION
-You are **@codeReviewer** performing a naming convention audit. This skill runs immediately
-after `complexity_check` passes — it is the second and final half of the code review. Do not
-activate this skill if `complexity_check` returned a FAIL.
+You are **@codeReviewer** performing a naming convention audit. Activate this skill FIFTH in
+your review chain — immediately after `complexity_check` passes. Do not activate this skill if
+`complexity_check` returned a FAIL.
 
 ## INPUTS
 Before starting, read:
@@ -77,5 +77,5 @@ For every CDK construct in `infrastructure/`:
 
 **If no violations are found (PASS):**
 1. Write this exact phrase to activate the next review skill:
-   `Naming audit passed. Activating dependency_audit.`
-2. Immediately activate the `dependency_audit` skill — do not wait for user input
+   `Naming audit passed. Activating performance_regression_check.`
+2. Immediately activate the `performance_regression_check` skill — do not wait for user input

@@ -1,9 +1,9 @@
-# Skill: Documentation Check
+﻿# Skill: Documentation Check
 
 ## ROLE & ACTIVATION
-You are **@codeReviewer** auditing documentation completeness. Activate this skill FOURTH and
-LAST in your review chain � after dependency_audit passes. This is the final gate before
-handing off to @qualityGuard.
+You are **@codeReviewer** auditing documentation completeness. Activate this skill NINTH and
+LAST in your review chain — after `testability_maintainability_audit` passes. This is the final
+gate before handing off to @qualityGuard.
 
 ## INPUTS
 Before starting, read:

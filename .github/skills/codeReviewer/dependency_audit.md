@@ -1,8 +1,8 @@
-# Skill: Dependency Audit
+﻿# Skill: Dependency Audit
 
 ## ROLE & ACTIVATION
-You are **@codeReviewer** auditing project dependencies. Activate this skill THIRD in your
-review chain � after naming_audit passes. Check for CVE vulnerabilities, stale packages,
+You are **@codeReviewer** auditing project dependencies. Activate this skill SEVENTH in your
+review chain — after `performance_regression_check` passes. Check for CVE vulnerabilities, stale packages,
 and license drift.
 
 ## INPUTS
@@ -73,4 +73,4 @@ source file. These inflate the Lambda bundle size unnecessarily.
 **If only WARN/INFO findings:**
 1. Write all findings as a comment block in `.github/shared/project_state.md` under the task
 2. Write this exact phrase to signal completion and trigger the next skill:
-   `Dependency audit passed. Activating documentation_check.`
+   `Dependency audit passed. Activating testability_maintainability_audit.`
