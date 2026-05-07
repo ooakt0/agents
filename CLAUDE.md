@@ -93,9 +93,14 @@ User
        │          └─▶ @techLead: "Quality gate cleared" → AUDIT_RESULT
        │
        └─▶ @devOps: DEPLOYMENT PHASE
-             ├─ pipeline_setup          (GitHub Actions, OIDC, no long-lived keys)
-             ├─ environment_promotion   (dev→staging→prod gates, canary routing, rollback)
-             └─ deployment_verification (CloudWatch alarms, DLQ=0, canary health)
+             ├─ pipeline_setup               (GitHub Actions, OIDC, no long-lived keys)
+             ├─ deployment_strategy_engine   (Blue/Green or Canary, warm-state preservation)
+             ├─ finops_cost_governance       (cost delta, idle-cost anti-patterns, budget gate)
+             ├─ observability_provisioning   (CloudWatch alarms/dashboards, X-Ray, log retention)
+             ├─ environment_promotion        (dev→staging→prod gates, canary routing)
+             ├─ deployment_verification      (CloudWatch alarms, DLQ=0, canary health)
+             ├─ automated_rollback_logic     (trigger thresholds, alias/TG flip, Last Known Good)
+             └─ drift_detection_audit        (CDK diff vs live, IAM/SG/tag drift, IaC enforcement)
                   └─▶ @techLead: "Deployment verified" → present to User
 ```
 
@@ -180,8 +185,13 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 | `Integration tests complete` | activate chaos_engineering_simulation |
 | `Chaos simulation complete` | activate performance_benchmark_gate |
 | `Performance benchmark gate cleared` | activate penetration_scan |
-| `Pipeline configured` | activate environment_promotion |
+| `Pipeline configured` | activate deployment_strategy_engine |
+| `Deployment strategy configured` | activate finops_cost_governance |
+| `Cost governance review complete` | activate observability_provisioning |
+| `Observability provisioned` | activate environment_promotion |
 | `Environment promotion complete` | activate deployment_verification |
+| `Deployment verified` | activate automated_rollback_logic |
+| `Rollback logic verified` | activate drift_detection_audit |
 
 ---
 
@@ -232,10 +242,15 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 - `.github/skills/qualityGuard/performance_benchmark_gate.md` — Artillery SLO gate, P99 regression detection, cold start check *(WAF: Performance Efficiency)*
 - `.github/skills/qualityGuard/penetration_scan.md` — Secret scan, OWASP Top 10, PII in logs *(WAF: Security)*
 
-### @devOps (Deployment Phase)
+### @devOps (Deployment Phase) — execution order
 - `.github/skills/devOps/pipeline_setup.md` — GitHub Actions CI/CD, OIDC auth, no long-lived keys *(WAF: Operational Excellence)*
+- `.github/skills/devOps/deployment_strategy_engine.md` — Blue/Green or Canary selection, warm-state preservation, CodeDeploy wiring *(WAF: Reliability)*
+- `.github/skills/devOps/finops_cost_governance.md` — Cost delta estimation, idle-cost anti-patterns, tag compliance, budget gate *(WAF: Cost Optimization)*
+- `.github/skills/devOps/observability_provisioning.md` — CloudWatch alarms/dashboards, X-Ray tracing, log retention *(WAF: Operational Excellence)*
 - `.github/skills/devOps/environment_promotion.md` — dev→staging→prod gates, canary routing, rollback strategy *(WAF: Reliability)*
 - `.github/skills/devOps/deployment_verification.md` — CloudWatch alarm check, DLQ=0, canary health *(WAF: Operational Excellence)*
+- `.github/skills/devOps/automated_rollback_logic.md` — Trigger thresholds, alias/TG flip, git revert, Last Known Good state *(WAF: Reliability)*
+- `.github/skills/devOps/drift_detection_audit.md` — CDK diff vs live, IAM/SG drift, tag compliance, IaC enforcement *(WAF: Operational Excellence)*
 
 ---
 
