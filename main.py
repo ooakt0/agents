@@ -165,6 +165,8 @@ def execute_software_pipeline(github_repo_url: str, task_description: str) -> st
         "completed_agents": [],
         "pending_refactor_proposal": None,
         "active_subtasks": [],
+        "user_approval": None,
+        "deployment_guide_path": None,
     }
 
     final_state: AgentState = _compiled_graph.invoke(initial_state, config=config)
@@ -221,6 +223,64 @@ def resume_refactor_decision(thread_id: str, decision: str) -> str:
     if question:
         _active_threads[thread_id] = config
         return _format_paused(thread_id, question)
+
+    return _format_complete(final_state, _github_url_from_state(final_state))
+
+
+# ---------------------------------------------------------------------------
+# Tool: resume_deployment_decision
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def resume_deployment_decision(thread_id: str, decision: str) -> str:
+    """Resume a paused pipeline at the deployment approval gate.
+
+    When execute_software_pipeline reaches the tech_lead_gate (after all quality
+    checks pass), the pipeline pauses and asks for your explicit authorization
+    before @devOps touches any infrastructure.
+
+    Args:
+        thread_id: The thread_id from the PIPELINE_PAUSED message.
+        decision:  'Approve' — @devOps runs the full automated deployment pipeline.
+                   'Manual'  — @devOps generates docs/deployment_guide.md with exact
+                               commands for you to execute at your own pace. No
+                               automated deployment occurs.
+
+    Returns:
+        Pipeline completion summary (auto-deploy) or the path to the generated
+        deployment guide (manual path).
+    """
+    config = _active_threads.pop(thread_id, None)
+    if config is None:
+        return (
+            f"Error: No paused pipeline found for thread_id={thread_id!r}. "
+            "It may have already been resumed or the server was restarted."
+        )
+
+    normalized = decision.strip().lower()
+    if normalized not in {"approve", "manual", "yes", "no", "y", "n"}:
+        _active_threads[thread_id] = config
+        return "Error: decision must be 'Approve' or 'Manual'."
+
+    final_state: AgentState = _compiled_graph.invoke(
+        Command(resume=decision), config=config
+    )
+
+    # The pipeline may pause again if a refactoring bottleneck is found during devOps
+    question = _pending_interrupt(thread_id, config)
+    if question:
+        _active_threads[thread_id] = config
+        return _format_paused(thread_id, question)
+
+    guide_path = final_state.get("deployment_guide_path")
+    if guide_path:
+        return (
+            f"DEPLOYMENT_GUIDE_READY\n\n"
+            f"Manual deployment guide written to: {guide_path}\n\n"
+            f"Open the file and follow the step-by-step instructions. "
+            f"Rollback commands are included at the end."
+        )
 
     return _format_complete(final_state, _github_url_from_state(final_state))
 

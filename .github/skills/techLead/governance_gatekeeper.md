@@ -109,17 +109,20 @@ If all §1–§5 checks pass, no drift is detected, and all documentation gaps a
 GOVERNANCE_CHECK: PASS
 ```
 
-Immediately follow with:
+Immediately follow with this exact phrase to activate the human approval gate:
 ```
-Handing off to @devOps
+Activating deployment_approval_gate.
 ```
+
+Do NOT write `Handing off to @devOps` here. The approval gate skill decides the deployment
+path — it will emit either `RELEASE_AUTHORIZED` or `MANUAL_DEPLOY_REQUESTED`.
 
 If any check fails or an unresolved drift is found:
 ```
 REVISION_REQUIRED: [precise description — e.g., "§2 violation: function processPayload() is 47 lines in src/handlers/payment.ts"]
 ```
 
-Do not write `Handing off to @devOps` until `GOVERNANCE_CHECK: PASS` is emitted.
+Do not write `GOVERNANCE_CHECK: PASS` until all checks are resolved.
 
 For `REVISION_REQUIRED`, route the exact failure back to the agent responsible:
 - §1, §3, §4, §5 failures → @codeCrafter (re-runs the affected skill)

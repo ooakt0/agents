@@ -90,9 +90,13 @@ User
        │     ├─ chaos_engineering_simulation  (failure injection, cascade prevention, RTO/RPO)
        │     ├─ performance_benchmark_gate    (Artillery SLO gate, P99 regression, cold start)
        │     └─ penetration_scan             (secret scan, OWASP, PII in logs, IDOR)
-       │          └─▶ @techLead: "Quality gate cleared" → AUDIT_RESULT
+       │          └─▶ @techLead: "Quality gate cleared" → AUDIT_RESULT → governance_gatekeeper
+       │                    │
+       │                    └─▶ HUMAN APPROVAL GATE (deployment_approval_gate)
+       │                          ├─ [Approve] → RELEASE_AUTHORIZED
+       │                          └─ [Manual]  → MANUAL_DEPLOY_REQUESTED → @devOps generates docs/deployment_guide.md → DEPLOYMENT_GUIDE_READY
        │
-       └─▶ @devOps: DEPLOYMENT PHASE
+       └─▶ @devOps: DEPLOYMENT PHASE  ← entered only on RELEASE_AUTHORIZED
              ├─ pipeline_setup               (GitHub Actions, OIDC, no long-lived keys)
              ├─ deployment_strategy_engine   (Blue/Green or Canary, warm-state preservation)
              ├─ finops_cost_governance       (cost delta, idle-cost anti-patterns, budget gate)
@@ -147,8 +151,11 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 |---|---|
 | `Handing off to @codeReviewer` | @codeReviewer (architectural_alignment_audit) |
 | `Handing off to @qualityGuard` | @qualityGuard (write_unit_tests) |
-| `Handing off to @devOps` | @devOps (pipeline_setup) |
-| `Quality gate cleared` | @techLead (AUDIT_RESULT → delegate devOps) |
+| `Quality gate cleared` | @techLead (AUDIT_RESULT → governance_gatekeeper) |
+| `GOVERNANCE_CHECK: PASS` | @techLead (deployment_approval_gate — user prompted Approve/Manual) |
+| `RELEASE_AUTHORIZED` | @devOps (pipeline_setup — full automated deployment) |
+| `MANUAL_DEPLOY_REQUESTED` | @devOps (deployment_guide — generates `docs/deployment_guide.md`) |
+| `DEPLOYMENT_GUIDE_READY` | **Pauses workflow** — guide delivered to user; no automated deploy |
 | `Returning to @techLead` | @techLead (review and decide) |
 | `Cleared for implementation` | @codeCrafter (implement_logic) |
 | `SECURITY FAIL: [msg]` | **Blocks workflow** (hook exits 2) |
@@ -185,6 +192,7 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 | `Integration tests complete` | activate chaos_engineering_simulation |
 | `Chaos simulation complete` | activate performance_benchmark_gate |
 | `Performance benchmark gate cleared` | activate penetration_scan |
+| `Activating deployment_approval_gate` | activate deployment_approval_gate (user approval prompt) |
 | `Pipeline configured` | activate deployment_strategy_engine |
 | `Deployment strategy configured` | activate finops_cost_governance |
 | `Cost governance review complete` | activate observability_provisioning |
@@ -251,6 +259,7 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 - `.github/skills/devOps/deployment_verification.md` — CloudWatch alarm check, DLQ=0, canary health *(WAF: Operational Excellence)*
 - `.github/skills/devOps/automated_rollback_logic.md` — Trigger thresholds, alias/TG flip, git revert, Last Known Good state *(WAF: Reliability)*
 - `.github/skills/devOps/drift_detection_audit.md` — CDK diff vs live, IAM/SG drift, tag compliance, IaC enforcement *(WAF: Operational Excellence)*
+- `.github/skills/devOps/deployment_guide.md` — Human-executable guide with exact CDK/CLI commands, verification steps, rollback plan *(MANUAL_DEPLOY_REQUESTED path)*
 
 ---
 

@@ -39,17 +39,22 @@ RouteTarget = Literal[
     "codeCrafter",
     "codeReviewer",
     "qualityGuard",
+    "tech_lead_gate",
     "devOps",
+    "generate_manual_guide",
     "permission_gate",
     "FINISH",
 ]
 
-# Fixed execution order — supervisor walks this list left-to-right
+# Fixed execution order — supervisor walks this list left-to-right.
+# tech_lead_gate is a human-in-the-loop breakpoint: it interrupts for deployment
+# approval before devOps runs. devOps is never reached without RELEASE_AUTHORIZED.
 PIPELINE_SEQUENCE = [
     "architect",
     "codeCrafter",
     "codeReviewer",
     "qualityGuard",
+    "tech_lead_gate",
     "devOps",
 ]
 
@@ -72,6 +77,9 @@ class AgentState(TypedDict):
     # Permission-gate fields
     pending_refactor_proposal: Optional[RefactorProposal]
     active_subtasks: list[str]  # task_ids approved by the user this run
+    # Deployment approval gate fields
+    user_approval: Optional[str]          # "Approve" | "Manual" | None
+    deployment_guide_path: Optional[str]  # populated when MANUAL_DEPLOY_REQUESTED
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +214,18 @@ def _append_subtask_to_project_state(repo_path: str, proposal: RefactorProposal)
 def supervisor_node(state: AgentState) -> AgentState:
     """
     Route to the permission gate if a refactor proposal is pending.
+    Route to the manual guide if the user declined automated deployment.
     Otherwise advance to the next agent in PIPELINE_SEQUENCE, or FINISH.
     """
     if state.get("pending_refactor_proposal"):
         return {**state, "next_node": "permission_gate"}
 
     completed: list[str] = state.get("completed_agents") or []
+
+    # Manual-deploy path: tech_lead_gate resolved to "Manual" — skip devOps entirely.
+    if state.get("user_approval") == "Manual" and "generate_manual_guide" not in completed:
+        return {**state, "next_node": "generate_manual_guide"}
+
     for agent_name in PIPELINE_SEQUENCE:
         if agent_name not in completed:
             return {**state, "next_node": agent_name}
@@ -462,6 +476,172 @@ def dev_ops_node(state: AgentState) -> AgentState:
 
 
 # ---------------------------------------------------------------------------
+# Deployment Approval Gate  (@techLead — human-in-the-loop)
+# ---------------------------------------------------------------------------
+
+
+def _build_approval_summary(state: AgentState) -> str:
+    """Construct the approval prompt shown to the user at the release gate."""
+    repo = state.get("github_url", "<repo>")
+    task = state.get("task_description", "<task>")
+    tests_ok = "✅ PASSED" if state.get("test_passed") else "⚠️  not confirmed"
+    agents_done = ", ".join(state.get("completed_agents") or [])
+    return (
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "  DEPLOYMENT APPROVAL GATE — @techLead\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"  Repo:    {repo}\n"
+        f"  Task:    {task}\n"
+        f"  Tests:   {tests_ok}\n"
+        f"  Agents:  {agents_done}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "\n"
+        "All quality checks passed.\n"
+        "Do you authorize @devOps to deploy these changes?\n"
+        "\n"
+        "  Approve — @devOps runs the full pipeline automatically\n"
+        "  Manual  — @devOps generates docs/deployment_guide.md for you to run\n"
+        "\n"
+        "Reply: Approve / Manual"
+    )
+
+
+def tech_lead_gate_node(state: AgentState) -> AgentState:
+    """
+    Human-in-the-loop release gate. Interrupts for user approval before @devOps runs.
+
+    On resume:
+      - "Approve" / "approve" / "yes" / "y" → RELEASE_AUTHORIZED → supervisor routes to devOps
+      - "Manual" / "manual" / "no" / "n"    → MANUAL_DEPLOY_REQUESTED → supervisor routes to
+        generate_manual_guide; devOps is never entered
+    """
+    print("Agent tech_lead_gate is requesting deployment authorization.")
+
+    summary = _build_approval_summary(state)
+    user_answer: str = interrupt(summary)
+
+    normalized = user_answer.strip().lower()
+    approval = "Approve" if normalized in {"approve", "yes", "y", "go", "deploy"} else "Manual"
+    signal = "RELEASE_AUTHORIZED" if approval == "Approve" else "MANUAL_DEPLOY_REQUESTED"
+
+    return {
+        **_base_state(
+            state,
+            f"[tech_lead_gate] {signal} — user decision recorded.",
+            "tech_lead_gate",
+        ),
+        "user_approval": approval,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Manual Deployment Guide Generator  (@devOps — MANUAL_DEPLOY_REQUESTED path)
+# ---------------------------------------------------------------------------
+
+
+def devops_manual_guide_node(state: AgentState) -> AgentState:
+    """
+    Generate docs/deployment_guide.md with concrete, copy-pasteable commands
+    derived from the current task context. Activated when user selects Manual.
+    """
+    print("Agent devOps is generating the manual deployment guide.")
+
+    repo_path = state.get("repo_path", "")
+    github_url = state.get("github_url", "<repo-url>")
+    task = state.get("task_description", "<task>")
+
+    guide_lines = [
+        "# Deployment Guide",
+        f"",
+        f"**Task:** {task}",
+        f"**Repository:** {github_url}",
+        f"",
+        "## Prerequisites",
+        "",
+        "| Tool | Version | Install |",
+        "|---|---|---|",
+        "| AWS CLI | ≥ 2.13 | `winget install Amazon.AWSCLI` / `brew install awscli` |",
+        "| Node.js | 20.x LTS | https://nodejs.org |",
+        "| AWS CDK | ≥ 2.x | `npm install -g aws-cdk` |",
+        "| TypeScript | ≥ 5.x | `npm install -g typescript` |",
+        "",
+        "## Pre-Deployment Checklist",
+        "",
+        "- [ ] Authenticated to the correct AWS account: `aws sts get-caller-identity`",
+        "- [ ] CDK synth passes: `npx cdk synth --context env=prod`",
+        "- [ ] Change set reviewed: `npx cdk diff --context env=prod`",
+        "",
+        "## Step-by-Step Deployment",
+        "",
+        "```bash",
+        "# 1. Install dependencies",
+        "npm ci",
+        "",
+        "# 2. Build TypeScript",
+        "npm run build",
+        "",
+        "# 3. Review what will change (read every [+] and [-] line)",
+        "npx cdk diff --context env=prod",
+        "",
+        "# 4. Deploy — pauses on any broadening security change",
+        "npx cdk deploy --all --context env=prod --require-approval broadening",
+        "```",
+        "",
+        "## Verification",
+        "",
+        "```bash",
+        "# CloudWatch alarms must all be OK",
+        "aws cloudwatch describe-alarms --state-value OK --query 'MetricAlarms[*].[AlarmName,StateValue]' --output table",
+        "",
+        "# DLQ must be empty",
+        'aws sqs get-queue-attributes --queue-url "$DLQ_URL" --attribute-names ApproximateNumberOfMessages',
+        "",
+        "# Health endpoint smoke test",
+        'for i in $(seq 1 10); do curl -s -o /dev/null -w "Check $i: %{http_code}\\n" "$API_ENDPOINT/health"; done',
+        "```",
+        "",
+        "## Rollback Plan",
+        "",
+        "```bash",
+        "# Option A: Lambda alias rollback (< 60 seconds)",
+        "aws lambda update-alias --function-name <function> --name live --function-version <prev-version> --routing-config AdditionalVersionWeights={}",
+        "",
+        "# Option B: CloudFormation stack rollback",
+        "aws cloudformation rollback-stack --stack-name <stack-name>",
+        "",
+        "# Option C: Git revert + redeploy",
+        "git revert HEAD --no-edit && git push origin main",
+        "```",
+        "",
+        "---",
+        f"Generated by: @devOps — deployment_guide skill  ",
+        f"Signal: DEPLOYMENT_GUIDE_READY",
+    ]
+
+    guide_content = "\n".join(guide_lines)
+
+    guide_path = "docs/deployment_guide.md"
+    if repo_path:
+        out = Path(repo_path) / guide_path
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(guide_content, encoding="utf-8")
+    else:
+        # No local repo — write relative to cwd
+        out = Path(guide_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(guide_content, encoding="utf-8")
+
+    return {
+        **_base_state(
+            state,
+            f"[devOps] DEPLOYMENT_GUIDE_READY — guide written to {guide_path}",
+            "generate_manual_guide",
+        ),
+        "deployment_guide_path": guide_path,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Graph Assembly
 # ---------------------------------------------------------------------------
 
@@ -474,7 +654,9 @@ def build_graph() -> StateGraph:
     graph.add_node("codeCrafter", code_crafter_node)
     graph.add_node("codeReviewer", code_reviewer_node)
     graph.add_node("qualityGuard", quality_guard_node)
+    graph.add_node("tech_lead_gate", tech_lead_gate_node)
     graph.add_node("devOps", dev_ops_node)
+    graph.add_node("generate_manual_guide", devops_manual_guide_node)
     graph.add_node("permission_gate", permission_gate_node)
 
     graph.set_entry_point("supervisor")
@@ -487,22 +669,23 @@ def build_graph() -> StateGraph:
             "codeCrafter": "codeCrafter",
             "codeReviewer": "codeReviewer",
             "qualityGuard": "qualityGuard",
+            "tech_lead_gate": "tech_lead_gate",
             "devOps": "devOps",
+            "generate_manual_guide": "generate_manual_guide",
             "permission_gate": "permission_gate",
             "FINISH": END,
         },
     )
 
-    for agent_name in WORKER_AGENTS:
+    for agent_name in [*WORKER_AGENTS, "tech_lead_gate", "generate_manual_guide"]:
         graph.add_edge(agent_name, "supervisor")
 
-    # permission_gate returns to supervisor after interrupt resolution
     graph.add_edge("permission_gate", "supervisor")
 
     return graph
 
 
-# Compiled without checkpointer for standalone __main__ usage
+# Standalone compile (no checkpointer — HITL interrupt not available in __main__)
 compiled_graph = build_graph().compile()
 
 
@@ -528,6 +711,8 @@ if __name__ == "__main__":
         "completed_agents": [],
         "pending_refactor_proposal": None,
         "active_subtasks": [],
+        "user_approval": None,
+        "deployment_guide_path": None,
     }
 
     print("=== Starting multi-agent orchestration ===\n")
