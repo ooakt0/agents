@@ -81,11 +81,15 @@ User
        │          └─▶ @qualityGuard: "Handing off to @qualityGuard"
        │
        ├─▶ @qualityGuard: QUALITY PHASE
-       │     ├─ write_unit_tests        (Jest, ≥80% branch coverage, aws-sdk-client-mock)
-       │     ├─ mock_aws_responses      (__mocks__/aws.ts barrel with realistic fixtures)
-       │     ├─ integration_test        (LocalStack end-to-end, DLQ flow, idempotency)
-       │     ├─ load_test               (Artillery, P99 SLOs, DLQ depth under load)
-       │     └─ penetration_scan        (secret scan, OWASP, PII in logs, IDOR)
+       │     ├─ automated_threat_modeling     (STRIDE, IAM audit, encryption check)
+       │     ├─ contract_testing_verification (Pact consumer contracts, breaking change guard)
+       │     ├─ compliance_as_code_audit      (SOC 2, PCI-DSS, GDPR checklists, log retention)
+       │     ├─ write_unit_tests              (Jest, ≥80% branch coverage, aws-sdk-client-mock)
+       │     ├─ mock_aws_responses            (__mocks__/aws.ts barrel with realistic fixtures)
+       │     ├─ integration_test              (LocalStack end-to-end, DLQ flow, idempotency)
+       │     ├─ chaos_engineering_simulation  (failure injection, cascade prevention, RTO/RPO)
+       │     ├─ performance_benchmark_gate    (Artillery SLO gate, P99 regression, cold start)
+       │     └─ penetration_scan             (secret scan, OWASP, PII in logs, IDOR)
        │          └─▶ @techLead: "Quality gate cleared" → AUDIT_RESULT
        │
        └─▶ @devOps: DEPLOYMENT PHASE
@@ -168,8 +172,14 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 | `Performance regression check passed` | activate dependency_audit |
 | `Dependency audit passed` | activate testability_maintainability_audit |
 | `Testability audit passed` | activate documentation_check |
-| `Integration tests complete` | activate load_test |
-| `Load tests complete` | activate penetration_scan |
+| `Threat modeling complete` | activate contract_testing_verification |
+| `Contract testing complete` | activate compliance_as_code_audit |
+| `Compliance audit complete` | activate write_unit_tests |
+| `Unit tests complete` | activate mock_aws_responses |
+| `Mock responses complete` | activate integration_test |
+| `Integration tests complete` | activate chaos_engineering_simulation |
+| `Chaos simulation complete` | activate performance_benchmark_gate |
+| `Performance benchmark gate cleared` | activate penetration_scan |
 | `Pipeline configured` | activate environment_promotion |
 | `Environment promotion complete` | activate deployment_verification |
 
@@ -211,11 +221,15 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 - `.github/skills/codeReviewer/testability_maintainability_audit.md` — Hardcoded deps, static I/O, monolithic functions, interface coverage, fixture burden *(WAF: Operational Excellence)*
 - `.github/skills/codeReviewer/documentation_check.md` — README, .env.example, no TODO/FIXME *(WAF: Operational Excellence)*
 
-### @qualityGuard (Quality Phase)
+### @qualityGuard (Quality Phase) — execution order
+- `.github/skills/qualityGuard/automated_threat_modeling.md` — STRIDE analysis, IAM least-privilege audit, encryption check *(WAF: Security)*
+- `.github/skills/qualityGuard/contract_testing_verification.md` — Pact consumer-driven contracts, breaking payload detection *(WAF: Reliability)*
+- `.github/skills/qualityGuard/compliance_as_code_audit.md` — SOC 2 / PCI-DSS / GDPR checklists, log retention, drift check *(WAF: Security)*
 - `.github/skills/qualityGuard/write_unit_tests.md` — Jest, ≥80% branch coverage, aws-sdk-client-mock
 - `.github/skills/qualityGuard/mock_aws_responses.md` — Typed mock barrel with realistic data
 - `.github/skills/qualityGuard/integration_test.md` — LocalStack end-to-end, DLQ flow, idempotency *(WAF: Reliability)*
-- `.github/skills/qualityGuard/load_test.md` — Artillery SLO verification, P99/error rate *(WAF: Performance)*
+- `.github/skills/qualityGuard/chaos_engineering_simulation.md` — Failure injection, cascade prevention, RTO/RPO assertion *(WAF: Reliability)*
+- `.github/skills/qualityGuard/performance_benchmark_gate.md` — Artillery SLO gate, P99 regression detection, cold start check *(WAF: Performance Efficiency)*
 - `.github/skills/qualityGuard/penetration_scan.md` — Secret scan, OWASP Top 10, PII in logs *(WAF: Security)*
 
 ### @devOps (Deployment Phase)
