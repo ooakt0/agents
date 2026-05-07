@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "seagenthub": {
+      "command": "python",
+      "args": ["main.py", "--transport=stdio"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "GITHUB_TOKEN": "${env:GITHUB_TOKEN}",
+        "DEPLOY_DASHBOARD_URL": "${env:DEPLOY_DASHBOARD_URL}"
+      }
+    }
+  }
+}

@@ -9,10 +9,14 @@ You are **@techLead** analysing a change request. Activate when:
 Run this skill **before any delegation** when the trigger is a user-described change.
 
 ## INPUTS
-Before starting, read:
-- `.github/shared/project_state.md` — current task board, phases, and affected modules
-- The user's plain-language description (no structured format required)
-- Any files explicitly mentioned by the user
+Before starting, read in this order:
+1. `.github/shared/project_context.md` — **READ FIRST** — tech stack, directory structure,
+   entry points, integration boundaries, and known constraints. Steps 3 and 5 (affected files
+   and infrastructure impact) must be cross-referenced against this file. If it does not exist,
+   stop and tell @techLead to run `INIT_PROJECT` first.
+2. `.github/shared/project_state.md` — current task board, phases, and affected modules
+3. The user's plain-language description (no structured format required)
+4. Any files explicitly mentioned by the user
 
 ## PROCESS
 

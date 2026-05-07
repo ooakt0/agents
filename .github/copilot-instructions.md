@@ -127,7 +127,7 @@ completely. Read the agent's files before responding. One agent at a time — no
 5. `.github/skills/qualityGuard/penetration_scan.md` — secret scan, OWASP, PII in logs, IDOR
 
 **Rules:**
-- `SECURITY FAIL: [description]` (with colon) blocks the workflow — hook exits 2
+- `SECURITY FAIL: [description]` (with colon) blocks the workflow
 - `load_test` SLO failure → flag to @architect for right-sizing, do NOT run penetration_scan
 - All 5 skills PASS → write: `Quality gate cleared. Returning results to @techLead.`
 
@@ -163,7 +163,7 @@ completely. Read the agent's files before responding. One agent at a time — no
 1. **No skipping.** Every phase is mandatory. @codeCrafter → @codeReviewer → @qualityGuard → @devOps.
 2. **One source of truth.** `.github/shared/project_state.md` is the only task tracker. Read it first, update after every handoff.
 3. **ADRs are permanent.** Every architecture decision goes in `.github/shared/architecture_log.md`. @codeCrafter reads before implementing.
-4. **Signal phrases are exact.** Hooks match literal strings — do not paraphrase.
+4. **Signal phrases are exact.** Agents must write them verbatim — do not paraphrase.
 5. **Security blocks everything.** `SECURITY FAIL:` (with colon) stops all work until @techLead resolves.
 6. **No task is Done until @techLead verifies.** Even after `deployment_verification`, @techLead signs off.
 7. **Project memory first.** Every agent reads `.github/shared/project_context.md` before any other file. @techLead creates it at `INIT_PROJECT` and keeps it current. Never delegate without it.

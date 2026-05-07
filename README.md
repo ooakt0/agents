@@ -1,8 +1,11 @@
 # Multi-Agent Engineering Framework
 
-A portable, AI-powered engineering team built on structured prompts, hook-driven automation, and a single shared state file. Drop it into any project and get a full SDLC — design, implement, review, test, deploy — with automatic agent handoffs.
+A portable, AI-powered engineering team with two complementary layers:
 
-Supports **GitHub Copilot** and **Claude Code** on the same hook layer.
+1. **Prompt-driven agents** — structured personas for GitHub Copilot and Claude Code, coordinated through a shared state file and exact signal phrases.
+2. **`seagenthub` MCP Server** — a FastMCP tool server that exposes the same 6-agent pipeline as a single callable tool, consumable from VS Code, Cursor, and Claude Code without any LLM API key.
+
+Covers the full SDLC (design → implement → review → test → deploy) and all 6 pillars of the **AWS Well-Architected Framework**.
 
 ---
 
@@ -10,11 +13,11 @@ Supports **GitHub Copilot** and **Claude Code** on the same hook layer.
 
 1. [What This Is](#what-this-is)
 2. [Prerequisites](#prerequisites)
-3. [Using in a New Project](#using-in-a-new-project)
-4. [First Run: INIT_PROJECT](#first-run-init_project)
-5. [Daily Usage](#daily-usage)
-6. [Agent Reference](#agent-reference)
-7. [How Agents Hand Off Automatically](#how-agents-hand-off-automatically)
+3. [seagenthub MCP Server](#seagenthub-mcp-server)
+4. [Using in a New Project (Prompt Agent Layer)](#using-in-a-new-project-prompt-agent-layer)
+5. [First Run: INIT_PROJECT](#first-run-init_project)
+6. [Daily Usage](#daily-usage)
+7. [Agent Reference](#agent-reference)
 8. [Maintaining the Shared State Files](#maintaining-the-shared-state-files)
 9. [Standards — What You Must Never Break](#standards--what-you-must-never-break)
 10. [Adding a New Skill to an Existing Agent](#adding-a-new-skill-to-an-existing-agent)
@@ -25,7 +28,7 @@ Supports **GitHub Copilot** and **Claude Code** on the same hook layer.
 
 ## What This Is
 
-Six AI agent personas, each with a defined role, a set of skill files, and strict handoff contracts:
+Six AI agent personas, each with a defined role, a set of skill files, and strict handoff contracts. All six are orchestrated via a **deterministic LangGraph pipeline** inside the `seagenthub` MCP server — no LLM routing, no API key, no PowerShell hooks.
 
 | Agent | Role | Activated By |
 |---|---|---|
@@ -36,20 +39,138 @@ Six AI agent personas, each with a defined role, a set of skill files, and stric
 | `@qualityGuard` | Testing & security — unit/integration/load/pen testing | `Handing off to @qualityGuard` (automatic) |
 | `@devOps` | Deployment — CI/CD, environment promotion, verification | `Handing off to @devOps` (automatic after `AUDIT_RESULT`) |
 
-The agents communicate through **exact signal phrases**. A PowerShell hook (`on_write.ps1`) scans every file write for these phrases and injects routing instructions into the AI's context window automatically — no manual switching required.
+The **signal phrases** defined in each skill file's OUTPUT CONTRACT are the transition conditions LangGraph evaluates to advance between nodes. When used as prompt-driven agents inside an IDE (Copilot, Claude Code), the same phrases drive the conversational handoff — the contract is identical in both layers.
 
 ---
 
 ## Prerequisites
 
-- **Windows** with PowerShell 5.1+ (the hook scripts use PS 5.1-compatible syntax)
 - **GitHub Copilot** (VS Code extension) or **Claude Code** (CLI) — the framework works with both
+- **Python 3.10+** and the **FastMCP** library for the `seagenthub` MCP server (`pip install fastmcp langgraph langchain-core PyGithub`)
 - AWS CDK v2 installed globally if you plan to use the infrastructure design skills (`npm i -g aws-cdk`)
 - The project you're copying into must have a `.github/` directory (created automatically by Git)
 
 ---
 
-## Using in a New Project
+## seagenthub MCP Server
+
+`seagenthub` is a **stateless FastMCP tool server** that runs the 6-agent LangGraph pipeline on a GitHub repository. Each call is fully isolated — no state is shared between invocations.
+
+### Architecture
+
+```
+seagenthub (FastMCP)
+  └─▶ execute_software_pipeline(github_repo_url, task_description)
+        └─▶ LangGraph StateGraph
+              supervisor (deterministic)
+                ├─▶ architect      — placeholder (extend with your IaC logic)
+                ├─▶ codeCrafter    — git clone → apply changes → git commit → push
+                ├─▶ codeReviewer   — placeholder (extend with your review logic)
+                ├─▶ qualityGuard   — python -m pytest in cloned repo
+                └─▶ devOps         — POST to DEPLOY_DASHBOARD_URL (if tests pass)
+```
+
+The supervisor is **deterministic** — no LLM required. It walks the fixed sequence `architect → codeCrafter → codeReviewer → qualityGuard → devOps` and marks each agent as complete in `AgentState.completed_agents`.
+
+### Signal Phrase Contract
+
+Signal phrases are the **transition conditions** LangGraph checks at each node boundary. They are defined in the `OUTPUT CONTRACT` section of every skill file and must be written verbatim — the graph will not advance if a phrase is paraphrased or missing.
+
+| Phrase | LangGraph transition |
+|---|---|
+| `Cleared for implementation` | `architect` → `codeCrafter` |
+| `Handing off to @codeReviewer` | `codeCrafter` → `codeReviewer` |
+| `Handing off to @qualityGuard` | `codeReviewer` → `qualityGuard` |
+| `Quality gate cleared` | `qualityGuard` → supervisor (triggers `devOps`) |
+| `Returning to @techLead` | Any node → supervisor (review and re-route) |
+| `SECURITY FAIL: [msg]` | **Terminates the graph** — no further nodes run |
+
+Intra-agent phrases (e.g. `Observability design complete`, `Pipeline configured`) advance the skill sequence within a single node without crossing a node boundary.
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `orchestrator.py` | LangGraph graph definition — `AgentState`, supervisor, 5 worker nodes, `compiled_graph` |
+| `main.py` | FastMCP server — exposes `execute_software_pipeline` tool |
+| `.cursor/mcp.json` | Cursor project-level MCP config |
+| `.github/agents/deploy_lead.agent.md` | VS Code Copilot custom agent backed by `seagenthub` |
+
+### Installation
+
+```bash
+pip install fastmcp langgraph langchain-core PyGithub
+```
+
+### Environment variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `GITHUB_TOKEN` | Optional | PAT for authenticated `git push` inside `codeCrafter` |
+| `DEPLOY_DASHBOARD_URL` | Optional | POST endpoint called by `devOps` after tests pass |
+
+No `OPENAI_API_KEY` is needed — the supervisor is fully deterministic.
+
+### Running the server
+
+```bash
+# stdio transport — default, used by Claude Code and Cursor
+python main.py
+
+# SSE transport — for VS Code
+python main.py --transport=sse
+```
+
+### IDE integration
+
+**Claude Code:**
+```bash
+claude mcp add seagenthub -- python main.py
+```
+
+**Cursor:** `.cursor/mcp.json` is picked up automatically at project open.
+
+**VS Code:** `.github/agents/deploy_lead.agent.md` is detected by GitHub Copilot from `.github/agents/`.
+
+### The `execute_software_pipeline` tool
+
+```python
+execute_software_pipeline(
+    github_repo_url: str,   # e.g. https://github.com/owner/repo
+    task_description: str,  # e.g. "Add input validation to /checkout and deploy to staging"
+) -> str                    # human-readable agent timeline + test/deploy status
+```
+
+Returns a formatted string:
+```
+AgentHub pipeline complete for https://github.com/owner/repo
+
+[HumanMessage] Repository: ...  Task: ...
+[architect]    [architect] Task processed.
+[codeCrafter]  [codeCrafter] Clone ✓ | commit: True | push: pushed to origin
+[codeReviewer] [codeReviewer] Task processed.
+[qualityGuard] [qualityGuard] Tests PASSED.
+[devOps]       [devOps] Deployment triggered. HTTP 200 — {"ok":true}
+
+Tests passed : True
+Agents run   : architect, codeCrafter, codeReviewer, qualityGuard, devOps
+```
+
+### AgentState fields
+
+| Field | Type | Description |
+|---|---|---|
+| `messages` | `list[BaseMessage]` | Full conversation history |
+| `next_node` | `str` | Agent name the supervisor selected next |
+| `github_url` | `str` | Repo URL passed from the tool |
+| `repo_path` | `str` | Absolute local path after `codeCrafter` clones the repo |
+| `test_passed` | `bool` | Set by `qualityGuard`; gates `devOps` deployment |
+| `task_description` | `str` | Human-readable goal forwarded from the MCP tool |
+| `completed_agents` | `list[str]` | Agents that have already run this invocation |
+
+---
+
+## Using in a New Project (Prompt Agent Layer)
 
 ### Step 1 — Copy the framework
 
@@ -58,18 +179,20 @@ Copy these directories and files into your **project root**:
 ```
 your-project/
   ├── .claude/
-  │   ├── settings.json           ← Claude Code hook configuration
   │   └── skills/                 ← Claude Code skill descriptors (one per agent)
+  ├── .cursor/
+  │   └── mcp.json                ← Cursor MCP configuration for seagenthub
   ├── .github/
   │   ├── copilot-instructions.md ← GitHub Copilot agent routing
-  │   ├── agents/                 ← Copilot agent persona files
-  │   ├── hooks/                  ← PowerShell hook scripts
+  │   ├── agents/                 ← Copilot agent persona files (incl. deploy_lead)
   │   ├── shared/                 ← State files (fill these in — see Step 2)
   │   └── skills/                 ← All agent skill instructions
+  ├── orchestrator.py             ← LangGraph pipeline
+  ├── main.py                     ← FastMCP seagenthub server
   └── CLAUDE.md                   ← Auto-loaded by Claude Code on every session
 ```
 
-All internal paths are **relative to the project root** — nothing is hardcoded. The framework works from any project directory without modification.
+All internal paths are **relative to the project root** — nothing is hardcoded.
 
 ### Step 2 — Fill in the shared state files
 
@@ -80,21 +203,15 @@ Four files in `.github/shared/` need project-specific content before first use:
 | `project_context.md` | Tech stack, directory structure, entry points, env vars — @techLead does this at `INIT_PROJECT` |
 | `project_state.md` | Task board — @techLead populates this; the template has placeholder headings |
 | `architecture_log.md` | Leave empty — @architect fills in ADRs during the design phase |
-| `standards.md` | **Do not change** — this is the engineering law. Extend it only if your project has extra conventions (see [Standards section](#standards--what-you-must-never-break)) |
+| `standards.md` | **Do not change** — this is the engineering law. Extend it only if your project has extra conventions |
 
-### Step 3 — Verify hook execution (Claude Code)
+### Step 3 — Start your first session
 
-Claude Code loads `.claude/settings.json` automatically. The hooks fire on every `Write`/`Edit` tool call. Confirm they work:
+Trigger the agent chain with:
 
 ```
 @techLead INIT_PROJECT: [describe your project]
 ```
-
-If the hooks are running, you will see `[WORKFLOW]` lines appearing in the chat after any agent writes a signal phrase.
-
-### Step 4 — Verify hook execution (GitHub Copilot)
-
-Copilot reads `.github/copilot-instructions.md` for routing and `.github/hooks/hooks.json` for hook definitions. The hooks fire via the Copilot Extension runner. The same `on_write.ps1` script handles both platforms.
 
 ---
 
@@ -149,13 +266,15 @@ Or just describe the change directly — @techLead detects plain-language change
 
 ### The automatic chain
 
-Once you trigger the first delegation, the rest of the chain runs automatically via hooks:
+Once you trigger the first delegation, the LangGraph pipeline advances through each node automatically, driven by signal phrases in each agent's OUTPUT CONTRACT:
 
 ```
 INIT_PROJECT → @architect → @codeCrafter → @codeReviewer → @qualityGuard → AUDIT_RESULT → @devOps → done
 ```
 
-You only need to intervene at two points:
+When running via the `seagenthub` MCP tool, the server executes this sequence end-to-end and returns a formatted timeline. When working through prompt-driven agents in an IDE, you direct the session — the same signal phrases tell the AI which agent to activate next.
+
+You only need to intervene at two points regardless of layer:
 - **After @architect:** review and approve the ADRs before writing `Cleared for implementation`
 - **After @qualityGuard:** run `AUDIT_RESULT` to verify the quality gate and trigger @devOps
 
@@ -202,7 +321,7 @@ Skill order: `complexity_check` → `naming_audit` → `dependency_audit` → `d
 
 ### @qualityGuard
 
-Runs automatically on `Handing off to @qualityGuard`. A `SECURITY FAIL:` from any skill blocks the entire workflow (hook exits 2) until @techLead resolves it.
+Runs automatically on `Handing off to @qualityGuard`. A `SECURITY FAIL:` from any skill blocks the entire workflow until @techLead resolves it.
 
 Skill order: `write_unit_tests` → `mock_aws_responses` → `integration_test` → `load_test` → `penetration_scan`.
 
@@ -214,42 +333,9 @@ Skill order: `pipeline_setup` → `environment_promotion` → `deployment_verifi
 
 ---
 
-## How Agents Hand Off Automatically
-
-The hook in `.github/hooks/on_write.ps1` fires after every file write and scans the written content for **exact signal phrases**. When it finds one, it injects routing instructions into the AI's context.
-
-### Signal phrase contract
-
-These strings are matched literally. **Do not paraphrase them** in custom skill files.
-
-**Inter-agent (cross-boundary):**
-| Phrase | Written by | Routes to |
-|---|---|---|
-| `Handing off to @codeReviewer` | @codeCrafter | @codeReviewer — starts complexity_check |
-| `Handing off to @qualityGuard` | @codeReviewer | @qualityGuard — starts write_unit_tests |
-| `Handing off to @devOps` | @techLead | @devOps — starts pipeline_setup |
-| `Quality gate cleared` | @qualityGuard | @techLead — prompts AUDIT_RESULT |
-| `Returning to @techLead` | Any agent | @techLead — review and decide |
-| `Cleared for implementation` | @architect | @codeCrafter — starts implement_logic |
-| `SECURITY FAIL: [message]` | @qualityGuard or @architect | Blocks everything (hook exits 2) |
-
-**Intra-agent (within a single agent's chain):**
-| Phrase | Reminder to next skill |
-|---|---|
-| `Observability design complete` | activate reliability_design |
-| `Reliability design complete` | activate generate_cdk_boilerplate |
-| `Resilience patterns complete` | hand off to @codeReviewer |
-| `Dependency audit passed` | activate documentation_check |
-| `Integration tests complete` | activate load_test |
-| `Load tests complete` | activate penetration_scan |
-| `Pipeline configured` | activate environment_promotion |
-| `Environment promotion complete` | activate deployment_verification |
-| `Change analysis complete. Activating impact_assessment.` | activate impact_assessment |
-| `Impact assessment complete. Delegating to @[agent].` | produce handoff template |
-
----
-
 ## Maintaining the Shared State Files
+
+The `seagenthub` MCP server reads and writes the `.github/shared/` files directly during pipeline execution. This is how context is maintained across different AI sessions and IDEs — Cursor, Claude Code, and VS Code all connect to the same server and therefore read the same state files. Any agent, in any IDE, picks up where the last session left off.
 
 ### `project_context.md` — project memory
 
@@ -272,8 +358,6 @@ These strings are matched literally. **Do not paraphrase them** in custom skill 
 **Owner:** @techLead. Update after every agent handoff.
 
 Task statuses: `🏗️ ACTIVE` → `🔍 REVIEW` → `✅ DONE`
-
-When a task reaches `✅ DONE`, the `on_task_complete.ps1` hook fires and outputs a Definition-of-Done checklist.
 
 ### `architecture_log.md` — ADR ledger
 
@@ -310,7 +394,7 @@ These constraints are hard-wired into every agent's skill files. Breaking them c
 | ≥ 80% branch coverage | `write_unit_tests.md` | @qualityGuard |
 | OIDC only in CI/CD (no long-lived AWS keys) | `pipeline_setup.md` | @devOps |
 | No prod deploy without manual approval gate | `environment_promotion.md` | @devOps |
-| `SECURITY FAIL:` blocks everything | `on_write.ps1` hook | All agents (hook exits 2) |
+| `SECURITY FAIL:` blocks everything | Any agent's skill file | All agents |
 
 ### What @techLead checks at AUDIT_RESULT
 
@@ -326,7 +410,7 @@ Before writing `Handing off to @devOps`, @techLead cross-checks @qualityGuard's 
 
 ## Adding a New Skill to an Existing Agent
 
-A "skill" is a `.md` file in `.github/skills/[agentName]/`. When you add one, you need to update **7 places**. Follow this checklist:
+A "skill" is a `.md` file in `.github/skills/[agentName]/`. When you add one, you need to update **5 places**. Follow this checklist:
 
 ### Step 1 — Create the skill file
 
@@ -374,34 +458,6 @@ In the `## @[agentName]` section, add the skill to the "Run skills in this order
 
 In the agent's sub-section under "Agent Skills Quick Reference", add a bullet for the new skill.
 
-### Step 6 — Wire the output signal phrase into `.github/hooks/on_write.ps1`
-
-Add an `elseif` block **before** the `# STATE CHANGE MONITOR` comment at the bottom:
-
-```powershell
-elseif ($content -like "*Your exact signal phrase here*") {
-    Write-Output ""
-    Write-Output "[WORKFLOW] @[agentName] [skill name] complete."
-    Write-Output "[NEXT] Activate [next_skill] skill immediately."
-    Write-Output "       Read .github/skills/[agentName]/[next_skill].md and continue."
-}
-```
-
-**Important:** The `elseif` chain order matters. More specific phrases must come before general ones. `SECURITY FAIL:` is always first.
-
-### Step 7 — Add the phrase to `.github/hooks/hooks.json`
-
-Add the exact signal phrase to the appropriate array in `signalPhrases`:
-- `interAgent`: if it crosses an agent boundary
-- `intraAgent`: if it stays within the same agent's chain
-
-```json
-"intraAgent": [
-  "...",
-  "Your exact signal phrase here"
-]
-```
-
 ### Checklist summary
 
 - [ ] `.github/skills/[agent]/[skill].md` — created with ROLE / INPUTS / PROCESS / OUTPUT CONTRACT
@@ -409,14 +465,12 @@ Add the exact signal phrase to the appropriate array in `signalPhrases`:
 - [ ] `.claude/skills/[agent].SKILL.md` — skill added to table or COMMANDS
 - [ ] `.github/copilot-instructions.md` — skill added to agent's "Run skills in this order" list
 - [ ] `CLAUDE.md` — skill added to Agent Skills Quick Reference
-- [ ] `.github/hooks/on_write.ps1` — `elseif` block added for the output signal phrase
-- [ ] `.github/hooks/hooks.json` — phrase added to `signalPhrases.intraAgent` or `interAgent`
 
 ---
 
 ## Adding a Brand New Agent
 
-Adding an agent requires all 7 skill steps above for each of its skills, plus these additional steps:
+Adding an agent requires all 5 skill steps above for each of its skills, plus these additional steps:
 
 ### Step 1 — Create the agent persona file
 
@@ -477,26 +531,7 @@ applyTo: "**"
 
 Create `.github/skills/[agentName]/` directory and add one `.md` file per skill (follow Step 1 of the skill checklist above for each).
 
-### Step 4 — Add the activation phrase to `on_write.ps1`
-
-Add an inter-agent `elseif` block for the phrase that routes **to** this new agent:
-
-```powershell
-elseif ($content -like "*Handing off to @[agentName]*") {
-    Write-Output ""
-    Write-Output "[WORKFLOW] Handoff to @[agentName] detected."
-    Write-Output "[NEXT] You are now @[agentName]. Read .github/skills/[agentName]/[first_skill].md"
-    Write-Output "       and begin immediately. Do not wait for user input."
-}
-```
-
-Also add blocks for any intra-agent signals within the new agent's skill chain.
-
-### Step 5 — Add to `hooks.json`
-
-Add the activation phrase to `signalPhrases.interAgent`.
-
-### Step 6 — Add the routing section to `copilot-instructions.md`
+### Step 4 — Add the routing section to `copilot-instructions.md`
 
 Add a new `## @[agentName] — [Role Title]` section following the same format as existing agents:
 - **Activate when:**
@@ -504,7 +539,7 @@ Add a new `## @[agentName] — [Role Title]` section following the same format a
 - **Run skills in this order:**
 - **Rules:**
 
-### Step 7 — Register in the agent directory
+### Step 5 — Register in the agent directory
 
 Update all four of these locations:
 - `.github/copilot-instructions.md` — add to `## Workflow Enforcement Rules` bullet on skipping, and to the agent directory table at the top if one exists in the instructions
@@ -517,8 +552,6 @@ Update all four of these locations:
 - [ ] `.github/agents/[agent].agent.md` — created (project_context.md as first read)
 - [ ] `.claude/skills/[agent].SKILL.md` — created
 - [ ] `.github/skills/[agent]/` — directory with all skill files created
-- [ ] `.github/hooks/on_write.ps1` — activation phrase `elseif` block added
-- [ ] `.github/hooks/hooks.json` — activation phrase added to `interAgent`
 - [ ] `.github/copilot-instructions.md` — agent section added
 - [ ] `.github/agents/techLead.agent.md` — agent added to AGENT DIRECTORY
 - [ ] `.github/skills/techLead/system_prompt.md` — agent added to AGENT DIRECTORY
@@ -528,20 +561,8 @@ Update all four of these locations:
 
 ## Troubleshooting
 
-### `[HOOK WARNING]` appears after every file write
-The hook received a payload with a missing or null `tool_input` field (common when the AI platform sends a different schema than Claude Code). The guard in `on_write.ps1` handles this and exits cleanly with code 0 — the warning is harmless but noisy. If you still see it, check that the `on_write.ps1` has the null-guard line:
-```powershell
-if (-not $data.PSObject.Properties["tool_input"] -or $null -eq $data.tool_input) { exit 0 }
-```
-
-### Agent is not activating automatically after a signal phrase
-1. Check that the signal phrase in the skill's OUTPUT CONTRACT **exactly matches** the `elseif` pattern in `on_write.ps1` (case and punctuation included).
-2. Check that the phrase is also listed in `hooks.json` under `signalPhrases`.
-3. Confirm the hook fired — look for `[WORKFLOW]` output in the chat.
-4. If the hook is not firing at all, check `.claude/settings.json` (Claude Code) or `hooks.json` (Copilot) for the correct file path to `on_write.ps1`.
-
 ### `SECURITY FAIL:` appeared and the workflow is blocked
-This is intentional. The hook exits with code 2, which stops the AI from continuing. To unblock:
+This is intentional — the AI stops all work when a security violation is detected. To unblock:
 1. Read the violation message after the colon
 2. Fix the issue in the code (remove the secret, fix the OWASP vulnerability, etc.)
 3. Tell @techLead what was fixed — it will re-run the affected quality check
@@ -554,7 +575,7 @@ This file was added after the initial project setup. Create it by running:
 @techLead will populate the file from your description without overwriting `project_state.md` or `architecture_log.md`.
 
 ### The agent chain is going in the wrong order
-The chain order is enforced by the signal phrases and hook routing — agents can only proceed in the defined sequence. If the order is wrong, an agent wrote the wrong signal phrase. Check the skill file's OUTPUT CONTRACT section and compare it to the `on_write.ps1` routing block for that phrase.
+The chain order is enforced by signal phrases and the LangGraph node transition logic — agents can only proceed in the defined sequence. If the order is wrong, an agent wrote the wrong signal phrase. Check the skill file's OUTPUT CONTRACT section and compare it to the transition table in `orchestrator.py` and the [Signal Phrase Contract](#signal-phrase-contract) above.
 
 ### A skill file is empty or has placeholder content
 All 21 skill files must contain real instructions to function. If you find a placeholder, write the skill content following the structure in [Adding a New Skill](#adding-a-new-skill-to-an-existing-agent). Reference the existing skill files as examples of the correct format.

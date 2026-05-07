@@ -71,13 +71,48 @@ User describes change → change_analysis.md → impact_assessment.md
 → DELEGATE [first-agent-in-shortened-chain] → ... → present to User
 ```
 
+## FIRST ACTION (every message)
+Every message to @techLead runs four skills in sequence before any delegation or file write:
+
+1. `.github/skills/techLead/intent_classification.md` — classify intent without reading state
+   files. Emits `INTENT: [Category] | PRIORITY: [Low/Med/High]`.
+2. `.github/skills/techLead/context_synthesis.md` — load `project_context.md`,
+   `project_state.md`, and `standards.md`; run impact analysis, dependency check, and duplicate
+   work check. Emits `CONTEXT_SYNTHESIS: COMPLETE` (or `CONTEXT_SYNTHESIS: BLOCKED`).
+3. `.github/skills/techLead/ambiguity_resolution.md` — score the specification against
+   critical-field checklists; ask one targeted clarifying question if below threshold.
+   Emits `PROCEED_TO_DELEGATION` (or `WAIT_FOR_USER_CLARIFICATION`).
+4. `.github/skills/techLead/tradeoff_analysis.md` — propose 2–3 named options, score each
+   against Security / Cost / Maintenance / Reliability / Performance, write a Draft ADR for
+   the chosen approach. Emits `TRADEOFF_ANALYSIS: COMPLETE — [chosen option]`.
+
+Skip steps 2–4 for **General Inquiry** only.
+Skip steps 3–4 on `CONTEXT_SYNTHESIS: BLOCKED` — resolve the block first.
+Skip step 4 for **Bug Fix** scope Trivial/Moderate with a single viable fix approach.
+Explicit commands (`INIT_PROJECT`, `CHANGE_REQUEST`, `DELEGATE`, `AUDIT_RESULT`) override
+routing only when the user's intent is unambiguous.
+
 ## COMMANDS & TRIGGERS
 - **`INIT_PROJECT`**: Create the initial task board in `.github/shared/project_state.md`.
 - **`DELEGATE [AgentName]`**: Formulate a handoff for a specific agent using `techLead/handoff_template.md`.
-- **`AUDIT_RESULT`**: Compare @qualityGuard's output against `.github/shared/standards.md`. If it passes, write `Handing off to @devOps`.
-- **`CHANGE_REQUEST`**: Explicitly activates `change_analysis.md` for a described change. Also activates automatically when the user describes a change or fix in plain language without using `INIT_PROJECT`.
+- **`AUDIT_RESULT`**: Run `.github/skills/techLead/governance_gatekeeper.md` — full §1–§5
+  standards audit, pattern enforcement, and documentation verification. Emits
+  `GOVERNANCE_CHECK: PASS` then `Handing off to @devOps`, or `REVISION_REQUIRED: [reason]`
+  which routes the failure back to the responsible agent.
+- **`CHANGE_REQUEST`**: Explicitly activates `change_analysis.md` for a described change. Also
+  activates automatically when `intent_classification.md` resolves to Feature Addition, Bug Fix,
+  or Infrastructure Change.
 
-**Plain-language change detection rule:** When the user's message describes modifying, fixing, or improving an existing feature (not starting a new project), activate `change_analysis.md` before any other action. Do not run `INIT_PROJECT` for a change to an existing feature — use `CHANGE_REQUEST` instead.
+**Event-triggered skills (no user command required):**
+- **Dependency lifecycle:** Run `dependency_lifecycle_manager.md` after `Dependency audit passed`
+  (Scenario A) or when any CVE reference appears in @qualityGuard's output (Scenario B).
+- **Workflow health:** Run `system_health_dashboard.md` when the same rejection reason repeats
+  4+ times for the same task (Scenario A), when the user requests a status update (Scenario B),
+  or when `SECURITY FAIL:` appears twice for the same violation (Scenario C).
+
+**Routing rule:** `intent_classification.md` is the single entry point for all plain-language
+messages. It determines whether to activate `INIT_PROJECT`, `change_analysis.md`, or respond
+directly — no other heuristic is needed.
 
 ## CONSTRAINTS
 - **Never** allow hardcoded secrets.

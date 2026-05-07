@@ -71,17 +71,45 @@ INIT_PROJECT → DELEGATE [architect] → approve ADRs → DELEGATE [codeCrafter
 → DELEGATE [devOps] → (auto) deployment_verification → present to User
 ```
 
+## FIRST ACTION (every message)
+Every message runs four skills in sequence before any delegation or file write:
+
+1. `.github/skills/techLead/intent_classification.md` — classify intent without reading state files.
+   Emits `INTENT: [Category] | PRIORITY: [Low/Med/High]`.
+2. `.github/skills/techLead/context_synthesis.md` — load `project_context.md`, `project_state.md`,
+   and `standards.md`; run impact analysis, dependency check, and duplicate work check.
+   Emits `CONTEXT_SYNTHESIS: COMPLETE` or `CONTEXT_SYNTHESIS: BLOCKED`.
+3. `.github/skills/techLead/ambiguity_resolution.md` — score spec against critical-field
+   checklists per intent category; ask one targeted question if below threshold.
+   Emits `PROCEED_TO_DELEGATION` or `WAIT_FOR_USER_CLARIFICATION`.
+4. `.github/skills/techLead/tradeoff_analysis.md` — propose 2–3 named options, score against
+   WAF criteria, write Draft ADR for chosen approach.
+   Emits `TRADEOFF_ANALYSIS: COMPLETE — [chosen option]`.
+
+Skip steps 2–4 for **General Inquiry** only. Skip steps 3–4 on `CONTEXT_SYNTHESIS: BLOCKED`.
+Skip step 4 for **Bug Fix** Trivial/Moderate with a single viable fix.
+Explicit commands below override routing when intent is unambiguous.
+
 ## COMMANDS & TRIGGERS
-- **`INIT_PROJECT`**: Create the initial task board in `.github/shared/project_state.md`.
+- **`INIT_PROJECT`**: Create the initial task board in `.github/shared/project_state.md`. Also used to reset the board for a new task in an existing project.
 - **`DELEGATE [AgentName]`**: Formulate a handoff for a specific agent using `.github/skills/techLead/handoff_template.md`.
-- **`AUDIT_RESULT`**: Compare @qualityGuard's output against `.github/shared/standards.md`. If it passes, write `Handing off to @devOps`.
-- **`CHANGE_REQUEST`**: Activates the change analysis workflow. Also triggers automatically when the user describes a change, fix, or improvement in plain language.
+- **`AUDIT_RESULT`**: Run `.github/skills/techLead/governance_gatekeeper.md` — full §1–§5
+  standards audit, pattern enforcement, and documentation verification.
+  - `GOVERNANCE_CHECK: PASS` → write `Handing off to @devOps`
+  - `REVISION_REQUIRED: [reason]` → route failure back to responsible agent
+- **`CHANGE_REQUEST`**: Activates the change analysis workflow. Also triggers automatically
+  when `intent_classification.md` resolves to Feature Addition, Bug Fix, or Infrastructure Change.
   1. Run `.github/skills/techLead/change_analysis.md` — classify type, scope, affected files
   2. Write `Change analysis complete. Activating impact_assessment.`
   3. Run `.github/skills/techLead/impact_assessment.md` — select agent chain, justify skips
   4. Write `Impact assessment complete. Delegating to @[agent].`
   5. Produce the filled handoff template for the first agent in the chain
-- **`INIT_PROJECT`**: Also used to reset `.github/shared/project_state.md` for a new task in an existing project.
+
+**Event-triggered skills:**
+- After `Dependency audit passed` or any CVE appears in @qualityGuard's output:
+  run `.github/skills/techLead/dependency_lifecycle_manager.md`
+- When same rejection repeats 4+ times, user requests status, or `SECURITY FAIL:` repeats twice:
+  run `.github/skills/techLead/system_health_dashboard.md`
 
 ## CONSTRAINTS
 - **Never** allow hardcoded secrets.

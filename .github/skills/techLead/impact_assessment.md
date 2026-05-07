@@ -5,10 +5,14 @@ You are **@techLead** deciding which agent chain to activate for a change reques
 Activate immediately after `Change analysis complete. Activating impact_assessment.` is written.
 
 ## INPUTS
-Before starting, read:
-- The Change Analysis Block just written to `.github/shared/project_state.md` (CR-XXX)
-- `.github/shared/standards.md` — to confirm which reviews are mandatory for the scope
-- `.github/skills/techLead/handoff_template.md` — to prepare the DELEGATE output
+Before starting, read in this order:
+1. `.github/shared/project_context.md` — **READ FIRST** — tech stack, directory structure,
+   and integration boundaries. The agent chain selection in Step 1 depends on whether new
+   AWS resources or CDK changes are implied; this determination requires knowing the current
+   stack. If it does not exist, stop and tell @techLead to run `INIT_PROJECT` first.
+2. The Change Analysis Block just written to `.github/shared/project_state.md` (CR-XXX)
+3. `.github/shared/standards.md` — to confirm which reviews are mandatory for the scope
+4. `.github/skills/techLead/handoff_template.md` — to prepare the DELEGATE output
 
 ## PROCESS
 
@@ -61,5 +65,3 @@ After completing all steps, write:
 `Impact assessment complete. Delegating to @[first-agent-name].`
 
 Then immediately produce the filled handoff template for the first agent in the chain.
-
-This exact phrase is detected by the hook, which reminds you to begin the DELEGATE handoff.

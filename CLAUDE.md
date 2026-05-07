@@ -2,7 +2,7 @@
 
 This directory contains a portable, multi-agent AI orchestration framework for AWS/TypeScript
 software development. Each agent folder contains skill files — structured prompts the AI follows
-to perform a specialized role. Claude Code hooks wire agents together automatically.
+to perform a specialized role. Agents coordinate through exact signal phrases in their skill OUTPUT CONTRACTs.
 
 Covers all 6 pillars of the **AWS Well-Architected Framework** and the full **SDLC**:
 Design → Implement → Review → Test → Deploy → Verify.
@@ -11,17 +11,16 @@ Design → Implement → Review → Test → Deploy → Verify.
 
 Copy these items to your project root:
 ```
-.claude/settings.json           ← hooks configuration (auto-loaded by Claude Code)
+.claude/settings.json           ← shared state config (auto-loaded by Claude Code)
 .github/copilot-instructions.md ← agent routing for GitHub Copilot
 CLAUDE.md                       ← this file (auto-loaded by Claude Code)
-.github/hooks/                  ← hook scripts (wires agent-to-agent routing)
 .github/shared/                 ← state files and standards
 .github/agents/                 ← GitHub Copilot agent personas
 .github/skills/                 ← all agent skill files
 .claude/skills/                 ← Claude Code skill descriptors
 ```
 
-All paths inside skill files and hooks are relative — nothing is hardcoded to a specific project.
+All paths inside skill files are relative — nothing is hardcoded to a specific project.
 
 ---
 
@@ -45,18 +44,28 @@ User
  └─▶ @techLead: INIT_PROJECT — decompose goal into tasks T-001, T-002, ...
        │
        ├─▶ @architect: DESIGN PHASE
-       │     ├─ observability_design    (Operational Excellence — metrics, logs, traces)
-       │     ├─ reliability_design      (Reliability — failure modes, RTO/RPO, DLQ config)
-       │     ├─ generate_cdk_boilerplate (IaC — tagged, private subnets, env-aware)
-       │     ├─ security_group_audit    (Security — IAM, networking, encryption)
-       │     └─ cost_estimation         (Cost — Dev vs Prod sizing, idle-cost anti-patterns)
+       │     ├─ service_boundary_analysis  (Domain — is this the right service? anti-coupling)
+       │     ├─ observability_design       (Operational Excellence — metrics, logs, traces)
+       │     ├─ reliability_design         (Reliability — failure modes, RTO/RPO, DLQ config)
+       │     ├─ disaster_recovery_strategy (Resilience — RTO/RPO, multi-region, PITR, runbook)
+       │     ├─ data_sovereignty_privacy   (Compliance — PII isolation, residency, retention)
+       │     ├─ generate_cdk_boilerplate   (IaC — tagged, private subnets, env-aware)
+       │     ├─ security_group_audit       (Security — IAM, networking, encryption)
+       │     ├─ cost_estimation            (Cost — Dev vs Prod sizing, idle-cost anti-patterns)
+       │     ├─ legacy_integration_bridge  (Migration — Adapter/Facade/ACL for existing systems)
+       │     └─ adr_generation            (Decision Authority — formal ADR for every key choice)
        │          └─▶ @techLead: approve ADRs → "Cleared for implementation"
        │
        ├─▶ @codeCrafter: IMPLEMENTATION PHASE
+       │     ├─ api_contract_design     (OpenAPI/TypeScript interfaces, StandardErrorResponse)
        │     ├─ add_dependencies        (audit for CVEs, licenses, bundle size)
+       │     ├─ secure_coding_standards (input validation, injection prevention, OWASP shift-left)
        │     ├─ implement_logic         (TypeScript strict, ≤30 lines/fn, custom errors)
+       │     ├─ error_handling_strategy (domain error hierarchy, central handler, safe messages)
        │     ├─ ui_component_generator  (Atomic Design, Tailwind, ARIA — if UI task)
-       │     └─ resilience_patterns     (retry backoff, idempotency, DLQ wiring, timeouts)
+       │     ├─ resilience_patterns     (retry backoff, idempotency, DLQ wiring, timeouts)
+       │     ├─ performance_optimization (N+1 fix, pagination, caching, cold start mitigation)
+       │     └─ refactoring_refinement  (DRY, SOLID, code smells, design patterns, naming)
        │          └─▶ @codeReviewer: "Handing off to @codeReviewer"
        │
        ├─▶ @codeReviewer: REVIEW PHASE
@@ -81,8 +90,7 @@ User
                   └─▶ @techLead: "Deployment verified" → present to User
 ```
 
-No step may be skipped. Every agent hands off using exact signal phrases that the hooks layer
-detects and routes automatically.
+No step may be skipped. Every agent hands off using exact signal phrases written verbatim in each skill's OUTPUT CONTRACT.
 
 ---
 
@@ -130,12 +138,23 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 | `Returning to @techLead` | @techLead (review and decide) |
 | `Cleared for implementation` | @codeCrafter (implement_logic) |
 | `SECURITY FAIL: [msg]` | **Blocks workflow** (hook exits 2) |
+| `REFACTOR_PROPOSAL: [file] \| [desc]` | **Pauses workflow** — supervisor routes to permission gate; user prompted Yes/No |
 
 | Phrase (intra-agent chain) | Reminds next skill |
 |---|---|
+| `Service boundary analysis complete` | activate observability_design |
 | `Observability design complete` | activate reliability_design |
-| `Reliability design complete` | activate generate_cdk_boilerplate |
-| `Resilience patterns complete` | hand off to @codeReviewer |
+| `Reliability design complete` | activate disaster_recovery_strategy |
+| `Disaster recovery strategy complete` | activate data_sovereignty_privacy |
+| `Data sovereignty review complete` | activate generate_cdk_boilerplate |
+| `Legacy integration bridge complete` | activate adr_generation (or return to @techLead) |
+| `Architecture records finalized` | returning to @techLead |
+| `API contract defined` | activate add_dependencies |
+| `Secure coding baseline established` | activate implement_logic |
+| `Error handling strategy complete` | activate ui_component_generator or resilience_patterns |
+| `Resilience patterns complete` | activate performance_optimization |
+| `Performance optimization complete` | activate refactoring_refinement |
+| `Refactoring complete` | hand off to @codeReviewer |
 | `Dependency audit passed` | activate documentation_check |
 | `Integration tests complete` | activate load_test |
 | `Load tests complete` | activate penetration_scan |
@@ -146,18 +165,28 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 
 ## Agent Skills Quick Reference
 
-### @architect (Design Phase)
+### @architect (Design Phase) — execution order
+- `.github/skills/architect/service_boundary_analysis.md` — Domain boundaries, coupling check, async decoupling *(WAF: Operational Excellence)*
 - `.github/skills/architect/observability_design.md` — CloudWatch alarms, structured logs, X-Ray tracing *(WAF: Operational Excellence)*
 - `.github/skills/architect/reliability_design.md` — Failure modes, RTO/RPO, DLQ config, Multi-AZ *(WAF: Reliability)*
+- `.github/skills/architect/disaster_recovery_strategy.md` — Multi-region failover, PITR, circuit breakers, DR runbook *(WAF: Reliability)*
+- `.github/skills/architect/data_sovereignty_privacy.md` — PII isolation, data residency, retention, CMK encryption *(WAF: Security)*
 - `.github/skills/architect/generate_cdk_boilerplate.md` — CDK v2 TypeScript stacks, tagging, private subnets
 - `.github/skills/architect/security_group_audit.md` — IAM least privilege, encryption, networking *(WAF: Security)*
 - `.github/skills/architect/cost_estimation.md` — Dev vs Prod sizing, idle-cost anti-patterns *(WAF: Cost)*
+- `.github/skills/architect/legacy_integration_bridge.md` — Adapter/Facade/ACL patterns, resilience wrapping, data mapping *(WAF: Reliability)*
+- `.github/skills/architect/adr_generation.md` — Formal ADR per decision, alternatives evaluated, reversibility rated *(WAF: Operational Excellence)*
 
-### @codeCrafter (Implementation Phase)
+### @codeCrafter (Implementation Phase) — execution order
+- `.github/skills/codeCrafter/api_contract_design.md` — TypeScript interfaces, endpoint specs, StandardErrorResponse *(WAF: Operational Excellence)*
 - `.github/skills/codeCrafter/add_dependencies.md` — CVE audit, license check, exact version pinning
+- `.github/skills/codeCrafter/secure_coding_standards.md` — Input validation (Zod/Pydantic), injection prevention, OWASP shift-left *(WAF: Security)*
 - `.github/skills/codeCrafter/implement_logic.md` — TypeScript strict, ≤30 lines/fn, custom error classes
-- `.github/skills/codeCrafter/ui_component_generator.md` — Atomic Design, Tailwind, ARIA accessibility
+- `.github/skills/codeCrafter/error_handling_strategy.md` — Domain error hierarchy, central handler, safe error messages *(WAF: Reliability)*
+- `.github/skills/codeCrafter/ui_component_generator.md` — Atomic Design, Tailwind, ARIA accessibility *(if UI task)*
 - `.github/skills/codeCrafter/resilience_patterns.md` — Retry backoff, idempotency, DLQ wiring *(WAF: Reliability)*
+- `.github/skills/codeCrafter/performance_optimization.md` — N+1 fix, pagination, caching, Lambda cold start *(WAF: Performance Efficiency)*
+- `.github/skills/codeCrafter/refactoring_refinement.md` — DRY, SOLID, code smells, design patterns, naming *(WAF: Operational Excellence)*
 
 ### @codeReviewer (Review Phase)
 - `.github/skills/codeReviewer/complexity_check.md` — Function size, nesting depth, promise chains
@@ -181,8 +210,6 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 
 ## Portability Notes
 
-- All hook paths in `.claude/settings.json` are relative to the project root
-- Hook scripts are in `.github/hooks/`; `$PSScriptRoot` provides portable internal path resolution
 - All skill files use root-relative paths (`.github/skills/[agent]/[skill].md`) — no absolute paths
 - `project_state.md` and `architecture_log.md` are templates — fill `[placeholders]` during INIT_PROJECT
 
@@ -191,20 +218,11 @@ as equivalent to `.github/shared/foo.md` — the prefix is a legacy convention.
 
 ---
 
-## Known Issues
-
-- PowerShell 5.1 (Windows default) does not support `??` or `-AsHashtable`.
-  Hook scripts use `PSObject.Properties` checks and `if/else` instead.
-- Hook scripts require script execution. The settings.json passes `-ExecutionPolicy Bypass` automatically.
-
----
-
 ## Adding a New Agent
 
 1. Create a new folder: `newAgent/`
 2. Add skill files: `ROLE & ACTIVATION` / `INPUTS` / `PROCESS` / `OUTPUT CONTRACT`
 3. Define exact signal phrase(s) in OUTPUT CONTRACT
-4. Add phrases to `.github/hooks/on_write.ps1` routing block
-5. Add agent to the Agent Directory table and workflow diagram in this file
-6. Add routing section to `.github/copilot-instructions.md`
-7. Update `.github/skills/techLead/system_prompt.md` Agent Directory
+4. Add agent to the Agent Directory table and workflow diagram in this file
+5. Add routing section to `.github/copilot-instructions.md`
+6. Update `.github/skills/techLead/system_prompt.md` Agent Directory
