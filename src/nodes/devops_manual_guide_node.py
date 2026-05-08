@@ -17,14 +17,14 @@ def devops_manual_guide_node(state: AgentState) -> AgentState:
     print("Agent devOps is generating the manual deployment guide.")
 
     repo_path = state.get("repo_path", "")
-    github_url = state.get("github_url", "<repo-url>")
+    project_path = state.get("project_path") or repo_path or "<project-path>"
     task = state.get("task_description", "<task>")
 
     guide_lines = [
         "# Deployment Guide",
         "",
         f"**Task:** {task}",
-        f"**Repository:** {github_url}",
+        f"**Project path:** {project_path}",
         "",
         "## Prerequisites",
         "",

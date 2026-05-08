@@ -1,22 +1,18 @@
 """
-codeCrafter node — clone repo, detect bottlenecks, apply changes, push.
+codeCrafter node — detect bottlenecks and apply local file changes.
 
-Bottleneck detection runs in two passes:
-  1. Parse REFACTOR_PROPOSAL signals from LLM-generated messages (if any).
-  2. Static regex scan of out-of-scope source files (always runs as a fallback).
+Responsibilities:
+  - Use the project_path already set in state (local-first — no git clone).
+  - Run two-pass bottleneck detection; pause at the permission gate if needed.
+  - Write file changes directly to the local project directory.
 
-If a proposal is found, the node sets pending_refactor_proposal and returns to
-the supervisor without committing — the permission_gate must resolve it first.
+repo_path is read from state so downstream nodes (codeReviewer, qualityGuard,
+devOps) can access the same working directory.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import tempfile
 from pathlib import Path
-
-from github import Auth, Github
 
 from src.nodes._utils import (
     base_state,
@@ -29,19 +25,9 @@ from src.state import AgentState
 def code_crafter_node(state: AgentState) -> AgentState:
     print("Agent codeCrafter is working.")
 
-    github_url: str = state.get("github_url", "")
-    if not github_url:
-        return base_state(state, "[codeCrafter] No github_url in state — skipped.", "codeCrafter")
-
-    repo_path = state.get("repo_path") or ""
+    repo_path: str = state.get("repo_path") or state.get("project_path", "")
     if not repo_path:
-        tmp = tempfile.mkdtemp(prefix="agenthub_")
-        subprocess.run(
-            ["git", "clone", "--depth", "1", github_url, tmp],
-            check=True,
-            timeout=120,
-        )
-        repo_path = tmp
+        return base_state(state, "[codeCrafter] No project_path in state — skipped.", "codeCrafter")
 
     # Pass 1: LLM-emitted REFACTOR_PROPOSAL signals
     proposal = parse_proposal_from_messages(state["messages"])
@@ -53,13 +39,12 @@ def code_crafter_node(state: AgentState) -> AgentState:
         )
 
     if proposal is not None:
-        # Surface proposal — do not commit until the user resolves the gate
         base = base_state(
             state,
             (
                 f"[codeCrafter] Out-of-scope bottleneck detected in {proposal['file']}. "
                 f"Reason: {proposal['description']}. "
-                f"Awaiting permission gate decision before committing."
+                f"Awaiting permission gate decision before proceeding."
             ),
             "codeCrafter",
         )
@@ -67,52 +52,18 @@ def code_crafter_node(state: AgentState) -> AgentState:
             **base,
             "repo_path": repo_path,
             "pending_refactor_proposal": proposal,
-            # Remove codeCrafter from completed so it re-runs after gate resolution
+            # Remove from completed so codeCrafter re-runs after gate resolution
             "completed_agents": [a for a in base["completed_agents"] if a != "codeCrafter"],
         }
 
-    # No out-of-scope issues — apply changes and push
+    # Apply local file changes — read/write directly to project directory
     marker = Path(repo_path) / ".agenthub_run"
     marker.write_text("orchestrated by AgentHub\n", encoding="utf-8")
-
-    subprocess.run(["git", "add", "-A"], cwd=repo_path, check=True, timeout=30)
-    commit_result = subprocess.run(
-        ["git", "commit", "-m", "chore: apply AgentHub orchestration changes"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-
-    push_output = "nothing to commit"
-    if commit_result.returncode == 0:
-        gh_token = os.environ.get("GITHUB_TOKEN", "")
-        if gh_token:
-            auth = Auth.Token(gh_token)
-            gh = Github(auth=auth)
-            _ = gh.get_user().login
-            gh.close()
-            authed_url = github_url.replace(
-                "https://", f"https://x-access-token:{gh_token}@"
-            )
-            subprocess.run(
-                ["git", "remote", "set-url", "origin", authed_url],
-                cwd=repo_path,
-                check=True,
-                timeout=10,
-            )
-        subprocess.run(
-            ["git", "push", "origin", "HEAD"],
-            cwd=repo_path,
-            check=True,
-            timeout=60,
-        )
-        push_output = "pushed to origin"
 
     return {
         **base_state(
             state,
-            f"[codeCrafter] Clone ✓ | commit: {commit_result.returncode == 0} | push: {push_output}",
+            "[codeCrafter] Local files modified in project directory.",
             "codeCrafter",
         ),
         "repo_path": repo_path,

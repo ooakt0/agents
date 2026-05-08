@@ -1,0 +1,135 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schema/server.json",
+  "name": "SEagenthub",
+  "version": "1.0.0",
+  "description": "A portable 6-agent MCP server covering the full SDLC and AWS Well-Architected Framework. Runs architect → codeCrafter → codeReviewer → qualityGuard → devOps in a deterministic LangGraph pipeline with human-in-the-loop deployment approval.",
+  "vendor": {
+    "name": "SEagenthub",
+    "url": "https://github.com/ooakt0/seagenthub"
+  },
+  "license": "MIT",
+  "sourceUrl": "https://github.com/ooakt0/seagenthub",
+  "homepage": "https://github.com/ooakt0/seagenthub",
+  "keywords": ["mcp", "ai-agents", "langgraph", "aws", "devops", "sdlc", "well-architected"],
+  "capabilities": {
+    "tools": true,
+    "resources": false,
+    "prompts": false
+  },
+  "tools": [
+    {
+      "name": "execute_software_pipeline",
+      "description": "Run the 6-agent SDLC pipeline on a GitHub repository. Executes architect → codeCrafter → codeReviewer → qualityGuard → devOps in sequence. May pause at a refactor permission gate or a deployment approval gate and return a PIPELINE_PAUSED message with a thread_id.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["github_repo_url", "task_description"],
+        "properties": {
+          "github_repo_url": {
+            "type": "string",
+            "description": "HTTPS URL of the target GitHub repository (e.g. https://github.com/owner/repo).",
+            "pattern": "^https://github\\.com/[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+(\\.git)?$"
+          },
+          "task_description": {
+            "type": "string",
+            "description": "Plain-English description of what the pipeline should accomplish."
+          }
+        }
+      }
+    },
+    {
+      "name": "resume_refactor_decision",
+      "description": "Resume a pipeline paused at a refactoring permission gate. Use the thread_id from the PIPELINE_PAUSED message and answer Yes or No to the proposed out-of-scope refactor.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["thread_id", "decision"],
+        "properties": {
+          "thread_id": {
+            "type": "string",
+            "description": "The thread_id returned in the PIPELINE_PAUSED message."
+          },
+          "decision": {
+            "type": "string",
+            "description": "Yes to approve the refactor (adds it as an active sub-task). No to skip and continue.",
+            "enum": ["Yes", "No", "yes", "no", "y", "n"]
+          }
+        }
+      }
+    },
+    {
+      "name": "resume_deployment_decision",
+      "description": "Resume a pipeline paused at the deployment approval gate. Use the thread_id from the PIPELINE_PAUSED message and choose Approve (automated deploy) or Manual (generate a deployment guide).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["thread_id", "decision"],
+        "properties": {
+          "thread_id": {
+            "type": "string",
+            "description": "The thread_id returned in the PIPELINE_PAUSED message."
+          },
+          "decision": {
+            "type": "string",
+            "description": "Approve to run the full automated devOps pipeline. Manual to generate docs/deployment_guide.md for manual execution.",
+            "enum": ["Approve", "Manual", "approve", "manual", "yes", "no", "y", "n"]
+          }
+        }
+      }
+    },
+    {
+      "name": "acknowledge_plan",
+      "description": "Acknowledge or cancel a pipeline plan returned by execute_software_pipeline. When the task implies remote changes, execute_software_pipeline returns a PLAN_PENDING message with a full execution plan before invoking any agents. Call this tool to confirm you have reviewed the plan (Acknowledge) or to abort with no changes made (Cancel).",
+      "inputSchema": {
+        "type": "object",
+        "required": ["thread_id", "decision"],
+        "properties": {
+          "thread_id": {
+            "type": "string",
+            "description": "The thread_id returned in the PLAN_PENDING message."
+          },
+          "decision": {
+            "type": "string",
+            "description": "Acknowledge (or yes) to start the pipeline. Cancel (or no) to abort before any agent or git operation runs.",
+            "enum": ["Acknowledge", "Cancel", "acknowledge", "cancel", "yes", "no", "y", "n", "ok", "proceed"]
+          }
+        }
+      }
+    }
+  ],
+  "runtimes": [
+    {
+      "type": "python",
+      "transport": "stdio",
+      "description": "Local execution via Claude Code or any MCP-compatible IDE.",
+      "command": "python",
+      "args": ["-m", "src.main", "--transport=stdio"],
+      "requiresPython": ">=3.10",
+      "install": "pip install -e ."
+    },
+    {
+      "type": "docker",
+      "transport": "streamable-http",
+      "description": "AWS Lambda via Lambda Web Adapter — HTTP requests forwarded to FastMCP on port 8080.",
+      "image": "seagenthub:latest",
+      "build": "docker build -t seagenthub:latest .",
+      "port": 8080,
+      "path": "/mcp"
+    }
+  ],
+  "env": {
+    "GITHUB_TOKEN": {
+      "description": "GitHub Personal Access Token used by codeCrafter to push commits to the target repository.",
+      "required": true,
+      "secret": true
+    },
+    "DEPLOY_DASHBOARD_URL": {
+      "description": "HTTP POST endpoint for the deployment dashboard. Receives status events from the devOps agent.",
+      "required": false,
+      "secret": false
+    },
+    "PORT": {
+      "description": "HTTP port for streamable-http and SSE transports. Defaults to 8080. Set automatically by the Lambda Web Adapter.",
+      "required": false,
+      "secret": false,
+      "default": "8080"
+    }
+  }
+}

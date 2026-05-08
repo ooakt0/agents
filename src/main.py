@@ -9,7 +9,6 @@ Usage
 
 Environment variables
 ---------------------
-  GITHUB_TOKEN            PAT for authenticated git push inside codeCrafter
   DEPLOY_DASHBOARD_URL    POST endpoint for the deployment dashboard (devOps)
   PORT                    HTTP port override (default: 8080); used by Lambda Web Adapter
 
@@ -19,7 +18,6 @@ No LLM API key is required — the supervisor is fully deterministic.
 from __future__ import annotations
 
 import os
-import re
 import sys
 import uuid
 from typing import Any
@@ -47,18 +45,35 @@ _active_threads: dict[str, dict[str, Any]] = {}
 
 mcp: FastMCP = FastMCP(
     "SEagenthub",
+    version="1.0.0",
+    website_url="https://github.com/ooakt0/seagenthub",
     instructions=(
-        "Use execute_software_pipeline to run the full CI/CD lifecycle "
-        "(design → implement → review → test → deploy) on a GitHub repository. "
-        "If the pipeline pauses for a refactoring decision, use resume_refactor_decision "
-        "with the returned thread_id and your Yes/No answer."
+        "SEagenthub is a 6-agent AI engineering framework that runs the full SDLC pipeline "
+        "on any local project directory, covering all 6 pillars of the AWS Well-Architected Framework.\n\n"
+        "AGENTS\n"
+        "  @architect    — service boundaries, CDK boilerplate, security groups, cost estimation, ADRs\n"
+        "  @codeCrafter  — TypeScript/Python/Java implementation, resilience patterns, performance optimisation\n"
+        "  @codeReviewer — architectural alignment, breaking-change detection, security surface analysis\n"
+        "  @qualityGuard — unit/integration/load tests, chaos simulation, penetration scan\n"
+        "  @devOps       — CI/CD pipeline, blue/green deployment, CloudWatch verification, rollback\n\n"
+        "TOOLS\n"
+        "  techLead                    — start a new pipeline run on a local project directory\n"
+        "  resume_refactor_decision    — approve or reject a proposed out-of-scope refactor\n"
+        "  resume_deployment_decision  — approve automated deploy or request a manual guide\n\n"
+        "HUMAN-IN-THE-LOOP GATES\n"
+        "  1. Refactor gate — approve/reject any out-of-scope refactoring proposals\n"
+        "  2. Deploy gate — choose automated deployment or receive a manual deployment guide\n\n"
+        "OPTIONAL ENV VARS\n"
+        "  DEPLOY_DASHBOARD_URL  — POST endpoint for deployment status webhooks\n\n"
+        "SOURCE  https://github.com/ooakt0/seagenthub\n"
+        "LICENSE MIT"
     ),
 )
 
-# Strict GitHub HTTPS URL pattern — prevents shell injection via URL arg
-_GITHUB_URL_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+(?:\.git)?$"
-)
+
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -90,75 +105,81 @@ def _format_paused(thread_id: str, question: str) -> str:
     )
 
 
-def _format_complete(final_state: AgentState, github_repo_url: str) -> str:
-    lines = [f"AgentHub pipeline complete for {github_repo_url}", ""]
-    for msg in final_state["messages"]:
-        role = getattr(msg, "name", None) or msg.__class__.__name__
-        lines.append(f"[{role}] {msg.content}")
+def _format_complete(final_state: AgentState, project_path: str) -> str:
+    sections: list[str] = [f"# AgentHub — {project_path}"]
+
+    # Artifacts first: diffs/files the IDE needs to apply changes
+    artifacts = final_state.get("artifacts") or []
+    if artifacts:
+        sections.append("## Changes\n\n" + "\n\n".join(artifacts))
+
+    # One final status line per agent — walk messages newest-first, deduplicate by name
+    seen: set[str] = set()
+    agent_lines: list[str] = []
+    for msg in reversed(final_state["messages"]):
+        name = getattr(msg, "name", None)
+        if name and name not in seen:
+            seen.add(name)
+            agent_lines.insert(0, f"  {name}: {msg.content.strip()}")
+    if agent_lines:
+        sections.append("## Agent results\n\n" + "\n".join(agent_lines))
+
     subtasks = ", ".join(final_state.get("active_subtasks") or []) or "none"
-    lines += [
-        "",
-        f"Tests passed   : {final_state.get('test_passed', False)}",
-        f"Agents run     : {', '.join(final_state.get('completed_agents') or [])}",
-        f"Subtasks added : {subtasks}",
-    ]
-    return "\n".join(lines)
+    sections.append(
+        "## Summary\n\n"
+        f"Tests passed : {final_state.get('test_passed', False)}\n"
+        f"Agents run   : {', '.join(final_state.get('completed_agents') or [])}\n"
+        f"Subtasks     : {subtasks}"
+    )
+    return "\n\n".join(sections)
 
 
-def _github_url_from_state(final_state: AgentState) -> str:
-    for msg in final_state.get("messages", []):
-        if isinstance(msg, HumanMessage):
-            for line in msg.content.splitlines():
-                if line.startswith("Repository:"):
-                    return line.split(":", 1)[1].strip()
-    return ""
+def _project_path_from_state(final_state: AgentState) -> str:
+    return final_state.get("project_path") or ""
 
 
 # ---------------------------------------------------------------------------
-# Tool: execute_software_pipeline
+# Tool: techLead
 # ---------------------------------------------------------------------------
 
 
 @mcp.tool()
-def execute_software_pipeline(github_repo_url: str, task_description: str) -> str:
-    """Run the 6-agent software pipeline on a GitHub repository.
+def techLead(project_path: str, task_description: str) -> str:
+    """Run the 6-agent software pipeline on a local project directory.
 
     Executes a deterministic sequence:
-      architect → codeCrafter (clone/commit/push) → codeReviewer
-      → qualityGuard (pytest) → devOps (deploy API)
+      architect → codeCrafter (modify files) → codeReviewer → qualityGuard
+      → tech_lead_gate (deploy approval) → devOps
 
-    Before codeCrafter runs, the pipeline checks whether the target repository
-    has a .github/shared/ directory.  If not, it injects the canonical
-    project_context.md, project_state.md, standards.md, and architecture_log.md
-    templates from the local templates/ directory so agents have a structured
-    working context immediately.
+    Before the pipeline starts, it injects canonical shared-state templates
+    (.github/shared/) into the project directory if they do not already exist,
+    giving every agent a structured project_context.md, project_state.md,
+    standards.md, and architecture_log.md to work with.
 
     If codeCrafter detects a HIGH-severity performance bottleneck in a file outside
     the current task scope, the pipeline pauses and returns a PIPELINE_PAUSED message
     containing a thread_id.  Use resume_refactor_decision to answer and continue.
 
     Args:
-        github_repo_url:  HTTPS URL of a GitHub repository,
-                          e.g. https://github.com/owner/repo
+        project_path:     The local absolute path to the project directory where
+                          the agents should work.
         task_description: Plain-English description of what the pipeline should accomplish.
 
     Returns:
         A pipeline summary string, or a PIPELINE_PAUSED prompt with a thread_id.
     """
-    if not _GITHUB_URL_RE.match(github_repo_url):
-        return (
-            f"Error: Invalid GitHub URL {github_repo_url!r}. "
-            "Must match https://github.com/<owner>/<repo>"
-        )
-
     thread_id = uuid.uuid4().hex
-    config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+
+    # Inject shared templates so agents have structured working context immediately
+    injected = inject_shared_templates(project_path)
+    if injected:
+        print(f"[SEagenthub] Injected shared templates: {', '.join(injected)}")
 
     initial_state: AgentState = {
         "messages": [
             HumanMessage(
                 content=(
-                    f"Repository: {github_repo_url}\n"
+                    f"Project path: {project_path}\n"
                     f"Task: {task_description}\n\n"
                     "Execute the full SDLC: design the architecture, implement "
                     "the necessary code changes, review the code, run all tests, "
@@ -167,31 +188,27 @@ def execute_software_pipeline(github_repo_url: str, task_description: str) -> st
             )
         ],
         "next_node": "",
-        "github_url": github_repo_url,
-        "repo_path": "",
+        "project_path": project_path,
+        "repo_path": project_path,
         "test_passed": False,
         "task_description": task_description,
         "completed_agents": [],
+        "artifacts": [],
         "pending_refactor_proposal": None,
         "active_subtasks": [],
         "user_approval": None,
         "deployment_guide_path": None,
     }
 
+    config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
     final_state: AgentState = _compiled_graph.invoke(initial_state, config=config)
-
-    # Inject shared templates into the cloned repo if needed
-    repo_path = final_state.get("repo_path", "")
-    injected = inject_shared_templates(repo_path)
-    if injected:
-        print(f"[SEagenthub] Injected shared templates: {', '.join(injected)}")
 
     question = _pending_interrupt(thread_id, config)
     if question:
         _active_threads[thread_id] = config
         return _format_paused(thread_id, question)
 
-    return _format_complete(final_state, github_repo_url)
+    return _format_complete(final_state, project_path)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +254,7 @@ def resume_refactor_decision(thread_id: str, decision: str) -> str:
         _active_threads[thread_id] = config
         return _format_paused(thread_id, question)
 
-    return _format_complete(final_state, _github_url_from_state(final_state))
+    return _format_complete(final_state, _project_path_from_state(final_state))
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +311,7 @@ def resume_deployment_decision(thread_id: str, decision: str) -> str:
             f"Rollback commands are included at the end."
         )
 
-    return _format_complete(final_state, _github_url_from_state(final_state))
+    return _format_complete(final_state, _project_path_from_state(final_state))
 
 
 # ---------------------------------------------------------------------------

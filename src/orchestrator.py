@@ -114,15 +114,14 @@ def build_graph() -> StateGraph:
     return graph
 
 
-# Standalone compile (no checkpointer — HITL interrupt not available in __main__)
-compiled_graph = build_graph().compile()
-
-
 # ---------------------------------------------------------------------------
 # Entry Point (standalone smoke test)
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Compiled here (not at module level) so importing orchestrator from main.py
+    # doesn't trigger a second, unused graph compilation on every cold start.
+    compiled_graph = build_graph().compile()
     initial_state: AgentState = {
         "messages": [
             HumanMessage(
@@ -133,7 +132,7 @@ if __name__ == "__main__":
             )
         ],
         "next_node": "",
-        "github_url": "",
+        "project_path": "",
         "repo_path": "",
         "test_passed": False,
         "task_description": "Design and deploy a new serverless API.",

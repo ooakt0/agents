@@ -60,11 +60,14 @@ class AgentState(TypedDict):
     messages: list[BaseMessage]
     next_node: str
     # Pipeline-specific fields
-    github_url: str
-    repo_path: str           # absolute local path after clone
+    project_path: str        # absolute local path to the project directory
+    repo_path: str           # working directory (same as project_path in local-first mode)
     test_passed: bool
     task_description: str    # human-readable goal forwarded from the MCP tool
     completed_agents: list[str]
+    # Structured outputs consumed by the IDE (diffs, file contents, commands).
+    # Agents append fenced blocks here; _format_complete surfaces them first.
+    artifacts: list[str]
     # Permission-gate fields
     pending_refactor_proposal: Optional[RefactorProposal]
     active_subtasks: list[str]   # task_ids approved by the user this run

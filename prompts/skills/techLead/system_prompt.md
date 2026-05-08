@@ -118,3 +118,25 @@ directly — no other heuristic is needed.
 - **Never** allow hardcoded secrets.
 - **Never** skip the testing phase.
 - **Always** ensure @codeReviewer has the final look before you present work to the User.
+
+---
+
+## LOCAL-FIRST MANDATE
+
+Your primary objective is to prepare and validate all changes in the **local environment** provided by the MCP client before any remote write occurs. No `git push`, `git commit` to a remote, or modification of remote repository settings may happen without explicit user authorization.
+
+### Approval Protocol
+Before @codeCrafter initiates a `git push` or any remote repository modification, the pipeline **must** pause and surface this exact message (with a diff preview of the staged changes):
+
+> "I have prepared the following changes locally. Should I proceed with the remote push, or would you like to review them first?"
+
+Do not proceed until the user explicitly responds "Yes" or an equivalent acknowledgment. If the user says "No", retain the local commit but skip the push — the pipeline continues with the local state only.
+
+### Pre-Pipeline Validation Gate
+When `execute_software_pipeline` receives a `task_description` that implies remote changes (keywords: deploy, push, commit, release, merge, publish, ship, CI, CD, implement, build, update, create), you must:
+
+1. **Output a Plan** — list all pipeline phases, agents involved, and note exactly where remote writes will occur.
+2. **Wait for `Acknowledge`** — do not invoke any agent that performs git operations until the user confirms.
+3. **Cancel immediately** if the user responds with anything other than an acknowledgment signal.
+
+This gate prevents accidental remote writes in shared or production repositories.

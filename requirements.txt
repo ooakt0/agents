@@ -3,6 +3,8 @@ fastmcp>=0.9
 langgraph>=0.2
 langchain-core>=0.2
 PyGithub>=2.3
+langchain-mcp-adapters
+mcp
 
 # Development / testing (optional — install with: pip install -r requirements-dev.txt)
 # pytest>=8.0

@@ -1,5 +1,5 @@
 # Multi-Agent Engineering Framework
-
+``
 A portable, AI-powered engineering team with two complementary layers:
 
 1. **Prompt-driven agents** — structured personas for GitHub Copilot and Claude Code, coordinated through shared state files and exact signal phrases.

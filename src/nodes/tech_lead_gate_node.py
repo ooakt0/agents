@@ -16,7 +16,7 @@ from src.state import AgentState
 
 
 def _build_approval_summary(state: AgentState) -> str:
-    repo = state.get("github_url", "<repo>")
+    repo = state.get("project_path") or state.get("repo_path", "<project-path>")
     task = state.get("task_description", "<task>")
     tests_ok = "✅ PASSED" if state.get("test_passed") else "⚠️  not confirmed"
     agents_done = ", ".join(state.get("completed_agents") or [])

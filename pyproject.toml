@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "SEagenthub"
-version = "0.1.0"
+version = "1.0.0"
 description = "A portable 6-agent MCP server covering the full SDLC and AWS Well-Architected Framework"
 readme = "README.md"
 requires-python = ">=3.10"
