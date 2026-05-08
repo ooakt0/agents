@@ -90,8 +90,17 @@ def _next_agent_instruction(next_step: str) -> str:
 # Session persistence
 # ---------------------------------------------------------------------------
 
+def _resolve_project_path(project_path: str) -> Path:
+    """Return an absolute, OS-canonical Path for project_path.
+
+    Handles forward-slash Windows paths (k:/foo/bar), relative paths, and
+    mixed separators uniformly on Linux, macOS, and Windows.
+    """
+    return Path(project_path).resolve()
+
+
 def _session_path(project_path: str) -> Path:
-    return Path(project_path) / _SESSION_SUBDIR / _SESSION_FILENAME
+    return _resolve_project_path(project_path) / _SESSION_SUBDIR / _SESSION_FILENAME
 
 
 def _save_session(
@@ -127,7 +136,14 @@ def _load_session(project_path: str) -> dict[str, Any] | None:
         return None
     try:
         sp = _session_path(project_path)
-        return json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else None
+        if not sp.exists():
+            return None
+        data = json.loads(sp.read_text(encoding="utf-8"))
+        # Normalise the stored project_path so subsequent comparisons use the
+        # same resolved form regardless of how it was originally supplied.
+        if "project_path" in data:
+            data["project_path"] = str(_resolve_project_path(data["project_path"]))
+        return data
     except (json.JSONDecodeError, OSError):
         return None
 
@@ -140,22 +156,33 @@ def _collect_new_create_paths(
 
     Only newly-created files are tracked for verification — update/delete ops
     cannot reliably be checked by existence alone.
+
+    Paths are normalised to forward-slash POSIX strings so that the values
+    stored in session.json are portable across Linux, macOS, and Windows.
     """
     if not project_path:
         return []
-    root = Path(project_path)
-    return [
-        op["path"]
-        for op in file_ops
-        if op.get("action") == "create" and not (root / Path(op["path"])).exists()
-    ]
+    root = _resolve_project_path(project_path)
+    pending: list[str] = []
+    for op in file_ops:
+        if op.get("action") != "create":
+            continue
+        # Normalise to forward slashes for cross-platform JSON storage.
+        rel = Path(op["path"]).as_posix()
+        if not (root / rel).exists():
+            pending.append(rel)
+    return pending
 
 
 def _find_missing_files(project_path: str, pending_paths: list[str]) -> list[str]:
-    """Return any paths from pending_paths that are still absent on disk."""
+    """Return any paths from pending_paths that are still absent on disk.
+
+    Uses a resolved absolute root so that forward-slash Windows paths
+    (k:/foo/bar) and relative project paths all resolve correctly on every OS.
+    """
     if not project_path or not pending_paths:
         return []
-    root = Path(project_path)
+    root = _resolve_project_path(project_path)
     return [p for p in pending_paths if not (root / Path(p)).exists()]
 
 
@@ -343,6 +370,10 @@ def start_pipeline(project_path: str, task_description: str) -> str:
     Reads .seahub/session.json from the project directory (if it exists) to
     surface any prior session context before running the architect node.
     """
+    # Resolve early so every downstream consumer gets a canonical absolute path
+    # that works identically on Linux, macOS, and Windows (including paths
+    # passed with forward slashes like k:/foo/bar from VS Code on Windows).
+    project_path = str(_resolve_project_path(project_path))
     thread_id = uuid.uuid4().hex
     injected = inject_shared_templates(project_path)
     if injected:

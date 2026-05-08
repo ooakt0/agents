@@ -52,7 +52,7 @@ def inject_shared_templates(repo_path: str) -> list[str]:
     if not repo_path or not _TEMPLATES_DIR.is_dir():
         return []
 
-    target_shared = Path(repo_path) / ".github" / "shared"
+    target_shared = Path(repo_path).resolve() / ".github" / "shared"
     if target_shared.exists():
         return []   # repo already has shared state — do not overwrite
 
