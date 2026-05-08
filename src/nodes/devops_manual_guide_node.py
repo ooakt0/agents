@@ -7,10 +7,8 @@ Writes a concrete, copy-pasteable guide derived from current task context.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from src.nodes._utils import base_state
-from src.state import AgentState
+from src.state import AgentState, FileOperation
 
 
 def devops_manual_guide_node(state: AgentState) -> AgentState:
@@ -95,14 +93,12 @@ def devops_manual_guide_node(state: AgentState) -> AgentState:
     guide_content = "\n".join(guide_lines)
     guide_path = "docs/deployment_guide.md"
 
-    if repo_path:
-        out = Path(repo_path) / guide_path
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(guide_content, encoding="utf-8")
-    else:
-        out = Path(guide_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(guide_content, encoding="utf-8")
+    file_ops: list[FileOperation] = list(state.get("file_operations") or [])
+    file_ops.append({
+        "path": guide_path,
+        "content": guide_content,
+        "action": "create",
+    })
 
     return {
         **base_state(
@@ -111,4 +107,5 @@ def devops_manual_guide_node(state: AgentState) -> AgentState:
             "generate_manual_guide",
         ),
         "deployment_guide_path": guide_path,
+        "file_operations": file_ops,
     }

@@ -4,7 +4,7 @@ codeCrafter node — detect bottlenecks and apply local file changes.
 Responsibilities:
   - Use the project_path already set in state (local-first — no git clone).
   - Run two-pass bottleneck detection; pause at the permission gate if needed.
-  - Write file changes directly to the local project directory.
+  - Emit file changes as FileOperations for the IDE to write to disk.
 
 repo_path is read from state so downstream nodes (codeReviewer, qualityGuard,
 devOps) can access the same working directory.
@@ -12,14 +12,12 @@ devOps) can access the same working directory.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from src.nodes._utils import (
     base_state,
     detect_bottleneck_in_out_of_scope_files,
     parse_proposal_from_messages,
 )
-from src.state import AgentState
+from src.state import AgentState, FileOperation
 
 
 def code_crafter_node(state: AgentState) -> AgentState:
@@ -56,9 +54,18 @@ def code_crafter_node(state: AgentState) -> AgentState:
             "completed_agents": [a for a in base["completed_agents"] if a != "codeCrafter"],
         }
 
-    # Apply local file changes — read/write directly to project directory
-    marker = Path(repo_path) / ".agenthub_run"
-    marker.write_text("orchestrated by AgentHub\n", encoding="utf-8")
+    # Emit a run-marker file for the IDE to write; no direct disk I/O here.
+    run_marker_content = (
+        f"orchestrated by AgentHub\n"
+        f"task: {state.get('task_description', '')}\n"
+    )
+
+    file_ops: list[FileOperation] = list(state.get("file_operations") or [])
+    file_ops.append({
+        "path": ".agenthub_run",
+        "content": run_marker_content,
+        "action": "create",
+    })
 
     return {
         **base_state(
@@ -67,4 +74,5 @@ def code_crafter_node(state: AgentState) -> AgentState:
             "codeCrafter",
         ),
         "repo_path": repo_path,
+        "file_operations": file_ops,
     }

@@ -6,7 +6,7 @@ All node modules import from here — never from each other — to avoid circula
 
 from __future__ import annotations
 
-from typing import Literal, Optional, TypedDict
+from typing import Literal, Optional, TypedDict, List
 
 from langchain_core.messages import BaseMessage
 
@@ -48,12 +48,16 @@ RouteTarget = Literal[
 # ---------------------------------------------------------------------------
 # Shared TypedDicts
 # ---------------------------------------------------------------------------
-
-
 class RefactorProposal(TypedDict):
     file: str          # repo-relative path, forward-slash separated
     description: str   # one-sentence bottleneck description
     task_id: str       # e.g. REFACTOR-3A7F2B
+
+
+class FileOperation(TypedDict):
+    path: str      # project-relative path, forward-slash separated
+    content: str   # full file content (or appended content for action="update")
+    action: Literal["create", "update", "delete"]
 
 
 class AgentState(TypedDict):
@@ -68,6 +72,9 @@ class AgentState(TypedDict):
     # Structured outputs consumed by the IDE (diffs, file contents, commands).
     # Agents append fenced blocks here; _format_complete surfaces them first.
     artifacts: list[str]
+    # Structured file operations — each agent appends to this list.
+    # main.py writes them to disk and returns them as the tool's JSON result.
+    file_operations: List[FileOperation]
     # Permission-gate fields
     pending_refactor_proposal: Optional[RefactorProposal]
     active_subtasks: list[str]   # task_ids approved by the user this run

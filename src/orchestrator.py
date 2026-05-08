@@ -32,18 +32,14 @@ from src.nodes.quality_guard_node import quality_guard_node
 from src.nodes.supervisor_node import route_supervisor, supervisor_node
 from src.nodes.tech_lead_gate_node import tech_lead_gate_node
 from src.state import AgentState, WORKER_AGENTS
-
 # ---------------------------------------------------------------------------
 # Template directory — resolved relative to this file's package root
 # ---------------------------------------------------------------------------
-
 _TEMPLATES_DIR: Path = Path(__file__).parent.parent / "templates"
-
 
 # ---------------------------------------------------------------------------
 # Template Injection
 # ---------------------------------------------------------------------------
-
 
 def inject_shared_templates(repo_path: str) -> list[str]:
     """
@@ -137,6 +133,8 @@ if __name__ == "__main__":
         "test_passed": False,
         "task_description": "Design and deploy a new serverless API.",
         "completed_agents": [],
+        "artifacts": [],
+        "file_operations": [],
         "pending_refactor_proposal": None,
         "active_subtasks": [],
         "user_approval": None,
