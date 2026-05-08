@@ -7,7 +7,10 @@ A portable, AI-powered engineering team with two complementary layers:
 
 Covers the full SDLC (design → implement → review → test → deploy) and all 6 pillars of the **AWS Well-Architected Framework**.
 
+[![smithery badge](https://smithery.ai/badge/oneofakindtech0/SEagenthub)](https://smithery.ai/servers/oneofakindtech0/SEagenthub)
+
 ---
+
 
 ## Table of Contents
 
