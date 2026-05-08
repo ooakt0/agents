@@ -3,7 +3,7 @@
 A portable, AI-powered engineering team with two complementary layers:
 
 1. **Prompt-driven agents** — structured personas for GitHub Copilot and Claude Code, coordinated through shared state files and exact signal phrases.
-2. **`seagenthub` MCP Server** — a FastMCP tool server that exposes the same 6-agent pipeline as a single callable tool, consumable from VS Code, Cursor, and Claude Code without any LLM API key.
+2. **`SEagenthub` MCP Server** — a FastMCP tool server that exposes the same 6-agent pipeline as a single callable tool, consumable from VS Code, Cursor, and Claude Code without any LLM API key.
 
 Covers the full SDLC (design → implement → review → test → deploy) and all 6 pillars of the **AWS Well-Architected Framework**.
 
@@ -14,7 +14,7 @@ Covers the full SDLC (design → implement → review → test → deploy) and a
 1. [What This Is](#what-this-is)
 2. [Repository Layout](#repository-layout)
 3. [Prerequisites](#prerequisites)
-4. [seagenthub MCP Server](#seagenthub-mcp-server)
+4. [SEagenthub MCP Server](#SEagenthub-mcp-server)
 5. [Using in a New Project (Prompt Agent Layer)](#using-in-a-new-project-prompt-agent-layer)
 6. [First Run: INIT\_PROJECT](#first-run-init_project)
 7. [Daily Usage](#daily-usage)
@@ -29,7 +29,7 @@ Covers the full SDLC (design → implement → review → test → deploy) and a
 
 ## What This Is
 
-Six AI agent personas, each with a defined role, a set of skill files, and strict handoff contracts. All six are orchestrated via a **deterministic LangGraph pipeline** inside the `seagenthub` MCP server — no LLM routing, no API key, no hook scripts.
+Six AI agent personas, each with a defined role, a set of skill files, and strict handoff contracts. All six are orchestrated via a **deterministic LangGraph pipeline** inside the `SEagenthub` MCP server — no LLM routing, no API key, no hook scripts.
 
 | Agent | Role | Activated By |
 |---|---|---|
@@ -72,7 +72,7 @@ agents/
 │   │   ├── codeReviewer.agent.md
 │   │   ├── qualityGuard.agent.md
 │   │   ├── devOps.agent.md
-│   │   └── deploy_lead.agent.md  ← VS Code Copilot agent backed by seagenthub
+│   │   └── deploy_lead.agent.md  ← VS Code Copilot agent backed by SEagenthub
 │   └── skills/                   ← Skill files organised by agent
 │       ├── techLead/             ← 12 skills (handoff_template, change_analysis, ...)
 │       ├── architect/            ← 10 skills
@@ -96,7 +96,7 @@ agents/
 │       └── architecture_log.md
 │
 ├── mcp.json                      ← MCP server config — copy to .cursor/ or .vscode/ in any project
-├── pyproject.toml                ← Python package metadata + `seagenthub` CLI entry point
+├── pyproject.toml                ← Python package metadata + `SEagenthub` CLI entry point
 ├── requirements.txt              ← Pinned runtime dependencies
 ├── CLAUDE.md                     ← Auto-loaded by Claude Code on every session
 └── README.md
@@ -109,7 +109,7 @@ agents/
 ## Prerequisites
 
 - **GitHub Copilot** (VS Code extension) or **Claude Code** (CLI) — works with both
-- **Python 3.10+** for the `seagenthub` MCP server
+- **Python 3.10+** for the `SEagenthub` MCP server
 - Install the package and its dependencies:
 
 ```bash
@@ -128,14 +128,14 @@ npm i -g aws-cdk
 
 ---
 
-## seagenthub MCP Server
+## SEagenthub MCP Server
 
-`seagenthub` is a **stateless FastMCP tool server** that runs the 6-agent LangGraph pipeline on a GitHub repository. Each call is fully isolated — no state persists between invocations.
+`SEagenthub` is a **stateless FastMCP tool server** that runs the 6-agent LangGraph pipeline on a GitHub repository. Each call is fully isolated — no state persists between invocations.
 
 ### Architecture
 
 ```
-seagenthub (FastMCP)  ←  src/main.py
+SEagenthub (FastMCP)  ←  src/main.py
   └─▶ execute_software_pipeline(github_repo_url, task_description)
         └─▶ LangGraph StateGraph  ←  src/orchestrator.py
               │
@@ -199,15 +199,15 @@ python src/main.py --transport=sse
 
 **Claude Code:**
 ```bash
-claude mcp add seagenthub -- python src/main.py
+claude mcp add SEagenthub -- python src/main.py
 ```
 
 **Cursor / VS Code:** Copy `mcp.json` from the repo root into your project's `.cursor/` or `.vscode/` directory, then update `cwd` to point at this repo.
 
-**After `pip install -e .`:** The `seagenthub` command is available globally:
+**After `pip install -e .`:** The `SEagenthub` command is available globally:
 ```bash
-seagenthub                        # stdio (default)
-seagenthub --transport=sse        # SSE for VS Code / Cursor
+SEagenthub                        # stdio (default)
+SEagenthub --transport=sse        # SSE for VS Code / Cursor
 ```
 
 ### The `execute_software_pipeline` tool
@@ -255,9 +255,9 @@ When the pipeline first processes a target repository, `inject_shared_templates(
 ### Step 1 — Install the package
 
 ```bash
-# Clone or copy the seagenthub repo, then install it
-git clone https://github.com/your-org/seagenthub
-cd seagenthub
+# Clone or copy the SEagenthub repo, then install it
+git clone https://github.com/your-org/SEagenthub
+cd SEagenthub
 pip install -e .
 ```
 
@@ -266,13 +266,13 @@ Then copy these files into your **target project root**:
 ```
 your-project/
   ├── .github/
-  │   ├── copilot-instructions.md ← copy from seagenthub/.github/
+  │   ├── copilot-instructions.md ← copy from SEagenthub/.github/
   │   └── shared/                 ← auto-populated at INIT_PROJECT
-  ├── .cursor/mcp.json            ← copy from seagenthub/mcp.json, set cwd to seagenthub dir
-  └── CLAUDE.md                   ← copy from seagenthub/CLAUDE.md
+  ├── .cursor/mcp.json            ← copy from SEagenthub/mcp.json, set cwd to SEagenthub dir
+  └── CLAUDE.md                   ← copy from SEagenthub/CLAUDE.md
 ```
 
-The `prompts/`, `templates/`, and `src/` directories stay inside the seagenthub package — they are not copied to your project.
+The `prompts/`, `templates/`, and `src/` directories stay inside the SEagenthub package — they are not copied to your project.
 
 ### Step 2 — Fill in the shared state files
 
@@ -353,7 +353,7 @@ INIT_PROJECT
   → done
 ```
 
-When running via the `seagenthub` MCP tool the server executes this sequence end-to-end. When working through prompt-driven agents in an IDE you direct the session — signal phrases tell the AI which agent activates next.
+When running via the `SEagenthub` MCP tool the server executes this sequence end-to-end. When working through prompt-driven agents in an IDE you direct the session — signal phrases tell the AI which agent activates next.
 
 You only need to intervene at two points:
 - **After @architect:** approve ADRs, then write `Cleared for implementation`
@@ -649,7 +649,7 @@ Blank templates for these files are in `templates/` and are auto-injected into t
 | Agent ignores a handoff phrase | Phrase was paraphrased | Copy the exact phrase from the OUTPUT CONTRACT |
 | `SECURITY FAIL:` does not stop the chain | Missing colon in the phrase | Write `SECURITY FAIL: [description]` with the colon |
 | `codeCrafter` loops — keeps re-running | `pending_refactor_proposal` not cleared | Call `resume_refactor_decision(thread_id, approved=False)` |
-| MCP server not found in Cursor | Wrong path or `cwd` in `mcp.json` | Confirm `cwd` is the seagenthub directory and `args` points to `src/main.py` |
+| MCP server not found in Cursor | Wrong path or `cwd` in `mcp.json` | Confirm `cwd` is the SEagenthub directory and `args` points to `src/main.py` |
 | Template injection skipped | `.github/shared/` already exists in target repo | Delete the directory to re-trigger injection |
 | Tests fail in `qualityGuard` | No pytest in target repo | Add `pytest` to `requirements.txt` and re-run |
 | Deployment skipped | `test_passed == False` | Fix failing tests; `devOps` will not run until tests pass |

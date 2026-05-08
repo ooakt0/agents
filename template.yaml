@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  SEagentHub — 6-agent MCP server deployed on AWS Lambda via the Lambda Web
+  Adapter pattern.  FastMCP runs as a standard HTTP process inside the
+  container; the adapter translates Lambda Function URL events into HTTP
+  requests and streams SSE responses back to MCP clients.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  GithubToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: >
+      GitHub PAT with repo + workflow scopes.  Required by codeCrafter for
+      authenticated git push.  Leave empty to inject via Secrets Manager or
+      set the Lambda env var post-deploy.
+
+  DeployDashboardUrl:
+    Type: String
+    Default: ""
+    Description: >
+      Optional HTTPS POST endpoint for the devOps deployment dashboard.
+      Leave empty if not used.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+    Description: CloudWatch log group retention in days.
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    # LangGraph graph compilation + multi-agent pipeline can take several minutes
+    Timeout: 900
+    # Each agent node invokes the LLM and may clone a repo — 1 GB keeps cold
+    # starts acceptable; raise to 2048 for larger repos
+    MemorySize: 1024
+    Environment:
+      Variables:
+        PYTHONUNBUFFERED: "1"
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # --- Log group (explicit so retention is enforced) ----------------------
+  # Uses a static name derived from the stack name — no reference to the
+  # function resource, which would create a circular dependency and cause
+  # CloudFormation to create the function first (letting Lambda auto-create
+  # the log group with infinite retention before our resource can claim it).
+  SEagentHubLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-SEagentHub"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # --- Lambda function (container image) -----------------------------------
+  SEagentHubFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SEagentHubLogGroup
+    Metadata:
+      # sam build uses these keys to locate and build the Docker image
+      Dockerfile: Dockerfile
+      DockerContext: .
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-SEagentHub"
+      PackageType: Image
+      Architectures:
+        - x86_64
+
+      # Function URL with response streaming — required for SSE/MCP streaming
+      FunctionUrlConfig:
+        AuthType: AWS_IAM
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowCredentials: false
+          AllowHeaders:
+            - content-type
+            - x-amz-date
+            - authorization
+            - x-amz-security-token
+            - x-api-key
+          AllowMethods:
+            - GET
+            - POST
+            - DELETE
+          AllowOrigins:
+            - "*"
+          MaxAge: 86400
+
+      Environment:
+        Variables:
+          GITHUB_TOKEN: !Ref GithubToken
+          DEPLOY_DASHBOARD_URL: !Ref DeployDashboardUrl
+          PORT: "8080"
+
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  FunctionUrl:
+    Description: >
+      MCP server endpoint.  Add to your MCP client config:
+        { "mcpServers": { "SEagenthub": { "url": "<FunctionUrl>mcp" } } }
+    Value: !GetAtt SEagentHubFunctionUrl.FunctionUrl
+
+  FunctionArn:
+    Description: Lambda function ARN (use with aws lambda invoke or IAM policies)
+    Value: !GetAtt SEagentHubFunction.Arn
+
+  LogGroupName:
+    Description: CloudWatch log group for structured agent logs
+    Value: !Ref SEagentHubLogGroup

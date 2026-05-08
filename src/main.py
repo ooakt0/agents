@@ -3,19 +3,22 @@ AgentHub MCP Server — stateless tool server wrapping the 6-agent LangGraph pip
 
 Usage
 -----
-  python src/main.py                          # stdio transport (default — Claude Code)
-  python src/main.py --transport=sse          # SSE transport for VS Code / Cursor
+  python src/main.py                                        # stdio (default — Claude Code / local)
+  python src/main.py --transport=sse                        # SSE for VS Code / Cursor
+  python src/main.py --transport=streamable-http --port=8080  # Lambda Web Adapter / Docker
 
 Environment variables
 ---------------------
   GITHUB_TOKEN            PAT for authenticated git push inside codeCrafter
   DEPLOY_DASHBOARD_URL    POST endpoint for the deployment dashboard (devOps)
+  PORT                    HTTP port override (default: 8080); used by Lambda Web Adapter
 
 No LLM API key is required — the supervisor is fully deterministic.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import uuid
@@ -43,7 +46,7 @@ _active_threads: dict[str, dict[str, Any]] = {}
 # ---------------------------------------------------------------------------
 
 mcp: FastMCP = FastMCP(
-    "seagenthub",
+    "SEagenthub",
     instructions=(
         "Use execute_software_pipeline to run the full CI/CD lifecycle "
         "(design → implement → review → test → deploy) on a GitHub repository. "
@@ -181,7 +184,7 @@ def execute_software_pipeline(github_repo_url: str, task_description: str) -> st
     repo_path = final_state.get("repo_path", "")
     injected = inject_shared_templates(repo_path)
     if injected:
-        print(f"[seagenthub] Injected shared templates: {', '.join(injected)}")
+        print(f"[SEagenthub] Injected shared templates: {', '.join(injected)}")
 
     question = _pending_interrupt(thread_id, config)
     if question:
@@ -300,15 +303,25 @@ def resume_deployment_decision(thread_id: str, decision: str) -> str:
 
 
 def main() -> None:
-    """CLI entry point — installed as the ``seagenthub`` console script."""
-    transport = "stdio"
+    """CLI entry point — installed as the ``SEagenthub`` console script."""
+    host = "0.0.0.0"
+    _port_env = os.environ.get("PORT")
+    port = int(_port_env) if _port_env else 8080
+    # Lambda Web Adapter sets PORT; its presence signals HTTP transport is required
+    transport = "streamable-http" if _port_env else "stdio"
+
     for arg in sys.argv[1:]:
         if arg.startswith("--transport="):
             transport = arg.split("=", 1)[1]
-        elif arg == "--transport" and sys.argv.index(arg) + 1 < len(sys.argv):
-            transport = sys.argv[sys.argv.index(arg) + 1]
+        elif arg.startswith("--port="):
+            port = int(arg.split("=", 1)[1])
+        elif arg.startswith("--host="):
+            host = arg.split("=", 1)[1]
 
-    mcp.run(transport=transport)
+    if transport in ("streamable-http", "sse"):
+        mcp.run(transport=transport, host=host, port=port, stateless_http=True)
+    else:
+        mcp.run(transport=transport)
 
 
 if __name__ == "__main__":

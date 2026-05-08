@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "seagenthub": {
+    "SEagenthub": {
       "command": "python",
       "args": ["src/main.py", "--transport=stdio"],
       "cwd": "${workspaceFolder}",
