@@ -1,9 +1,9 @@
 # Multi-Agent Engineering Framework
-``
+
 A portable, AI-powered engineering team with two complementary layers:
 
 1. **Prompt-driven agents** — structured personas for GitHub Copilot and Claude Code, coordinated through shared state files and exact signal phrases.
-2. **`SEagenthub` MCP Server** — a FastMCP tool server that exposes the same 6-agent pipeline as a single callable tool, consumable from VS Code, Cursor, and Claude Code without any LLM API key.
+2. **`SEagenthub` MCP Server** — a FastMCP tool server that exposes the same 6-agent pipeline as a callable tool, consumable from VS Code, Cursor, and Claude Code without any LLM API key.
 
 Covers the full SDLC (design → implement → review → test → deploy) and all 6 pillars of the **AWS Well-Architected Framework**.
 
@@ -14,7 +14,7 @@ Covers the full SDLC (design → implement → review → test → deploy) and a
 1. [What This Is](#what-this-is)
 2. [Repository Layout](#repository-layout)
 3. [Prerequisites](#prerequisites)
-4. [SEagenthub MCP Server](#SEagenthub-mcp-server)
+4. [SEagenthub MCP Server](#seahub-mcp-server)
 5. [Using in a New Project (Prompt Agent Layer)](#using-in-a-new-project-prompt-agent-layer)
 6. [First Run: INIT\_PROJECT](#first-run-init_project)
 7. [Daily Usage](#daily-usage)
@@ -51,12 +51,13 @@ agents/
 ├── src/                          ← MCP server source
 │   ├── main.py                   ← FastMCP entry point — run this to start the server
 │   ├── orchestrator.py           ← LangGraph graph assembly + template injection
+│   ├── pipeline.py               ← Step-and-Wait protocol: session, verification, responses
 │   ├── state.py                  ← AgentState TypedDict and shared types
 │   └── nodes/                    ← One module per LangGraph node
 │       ├── _utils.py             ← Shared helpers (base_state, make_worker, detect_bottleneck)
 │       ├── supervisor_node.py    ← Deterministic router (no LLM)
 │       ├── architect_node.py
-│       ├── code_crafter_node.py  ← git clone → apply changes → commit → push
+│       ├── code_crafter_node.py  ← Bottleneck detection → emits FileOperations
 │       ├── code_reviewer_node.py
 │       ├── quality_guard_node.py ← pytest runner
 │       ├── dev_ops_node.py       ← POST to DEPLOY_DASHBOARD_URL
@@ -104,6 +105,8 @@ agents/
 
 **Key distinction:** `templates/` holds the canonical blank copies. `src/orchestrator.py::inject_shared_templates()` copies them into `.github/shared/` of any **target repository** the first time the pipeline runs on it. The `.github/shared/` in this repo is the framework's own state, not a template.
 
+**Session state:** Each pipeline run writes `{project_path}/.seahub/session.json` to track completed agents, pending file verification, and the session ID. This file is read before every agent call so the TechLead knows exactly where it left off.
+
 ---
 
 ## Prerequisites
@@ -130,28 +133,98 @@ npm i -g aws-cdk
 
 ## SEagenthub MCP Server
 
-`SEagenthub` is a **stateless FastMCP tool server** that runs the 6-agent LangGraph pipeline on a GitHub repository. Each call is fully isolated — no state persists between invocations.
+`SEagenthub` is a **stateful, step-and-wait FastMCP tool server** that runs the 6-agent LangGraph pipeline one agent at a time. After each step the IDE receives `proposed_changes` — files to write to disk — and a `next_agent_instruction`. The server **will not advance** to the next agent until it can verify those files exist on disk.
+
+### Step-and-Wait Protocol
+
+```
+IDE                                 SEagenthub
+ │                                       │
+ │── techLead(project_path, task) ──────▶│
+ │                                       │ architect runs
+ │◀── STEP_COMPLETE ─────────────────────│
+ │    proposed_changes: [...]            │
+ │    next_agent_instruction: "Apply     │
+ │      files then call advance_pipeline"│
+ │    is_task_complete: false            │
+ │                                       │
+ │  [IDE writes files to disk]           │
+ │                                       │
+ │── advance_pipeline(token) ───────────▶│
+ │                                  ┌────┤ verify files on disk
+ │                                  │    │ if missing → WAITING_FOR_FILES
+ │                                  └────┤ if present → codeCrafter runs
+ │◀── STEP_COMPLETE ─────────────────────│
+ │    ...                                │
+ │  [repeat until is_task_complete=true] │
+```
+
+**Rule:** The IDE must write all `proposed_changes` to disk before calling `advance_pipeline`. If any required file is missing, the server returns `WAITING_FOR_FILES` and the pipeline does not advance.
 
 ### Architecture
 
 ```
 SEagenthub (FastMCP)  ←  src/main.py
-  └─▶ execute_software_pipeline(github_repo_url, task_description)
-        └─▶ LangGraph StateGraph  ←  src/orchestrator.py
-              │
-              ├── supervisor_node          ← deterministic router
-              │     reads PIPELINE_SEQUENCE, routes by completed_agents
-              │
-              ├── permission_gate_node     ← HITL: approve out-of-scope refactors
-              │
-              ├── architect_node           ← placeholder (extend with IaC logic)
-              ├── code_crafter_node        ← git clone → apply changes → commit → push
-              ├── code_reviewer_node       ← placeholder (extend with review logic)
-              ├── quality_guard_node       ← python -m pytest --tb=short -q
-              ├── tech_lead_gate_node      ← HITL: Approve or Manual deploy decision
-              ├── devops_manual_guide_node ← generates docs/deployment_guide.md
-              └── dev_ops_node             ← POST to DEPLOY_DASHBOARD_URL
+  ├── techLead(project_path, task_description)
+  │     └─▶ src/pipeline.py::start_pipeline()
+  │           reads .seahub/session.json (prior context)
+  │           injects templates into .github/shared/
+  │           runs architect node
+  │           saves session to .seahub/session.json
+  │           returns STEP_COMPLETE
+  │
+  ├── advance_pipeline(continuation_token)
+  │     └─▶ src/pipeline.py::advance_step()
+  │           reads .seahub/session.json
+  │           reads .github/shared/project_context.md
+  │           verifies pending files exist on disk
+  │           if missing → returns WAITING_FOR_FILES (no state change)
+  │           if present → runs next agent node
+  │           saves updated session to .seahub/session.json
+  │           returns STEP_COMPLETE | PIPELINE_PAUSED | PIPELINE_COMPLETE
+  │
+  ├── resume_refactor_decision(thread_id, decision)
+  └── resume_deployment_decision(thread_id, decision)
+
+  LangGraph StateGraph  ←  src/orchestrator.py
+    ├── supervisor_node          ← deterministic router
+    ├── permission_gate_node     ← HITL: approve out-of-scope refactors
+    ├── architect_node
+    ├── code_crafter_node        ← bottleneck detection → emits FileOperations
+    ├── code_reviewer_node
+    ├── quality_guard_node       ← python -m pytest --tb=short -q
+    ├── tech_lead_gate_node      ← HITL: Approve or Manual deploy decision
+    ├── devops_manual_guide_node ← generates docs/deployment_guide.md
+    └── dev_ops_node             ← POST to DEPLOY_DASHBOARD_URL
 ```
+
+### Response shape
+
+Every tool call returns JSON with these fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `str` | See status values below |
+| `session_id` | `str` | Stable identifier for this pipeline run (== `continuation_token`) |
+| `continuation_token` | `str` | Pass to `advance_pipeline` or resume tools |
+| `current_agent` | `str` | Agent that just completed |
+| `proposed_changes` | `list[FileOperation]` | Files the IDE must write to disk before advancing |
+| `next_agent_instruction` | `str` | Human-readable instruction — what to do next |
+| `is_task_complete` | `bool` | `true` only on `PIPELINE_COMPLETE` |
+| `requires_approval` | `bool` | `true` before `qualityGuard` — confirm with user |
+| `completed_tasks` | `list[str]` | Agents that have finished |
+| `pending_tasks` | `list[str]` | Agents still to run |
+| `status_update` | `str` | Last agent's output summary |
+
+### Response status values
+
+| Status | Meaning | IDE action |
+|---|---|---|
+| `STEP_COMPLETE` | Agent finished — files are ready | Write `proposed_changes` to disk, follow `next_agent_instruction` |
+| `WAITING_FOR_FILES` | Previous `proposed_changes` not on disk | Write the `missing_files` listed, then call `advance_pipeline` again |
+| `PIPELINE_PAUSED` | Human decision required | Call `resume_refactor_decision` or `resume_deployment_decision` |
+| `PIPELINE_COMPLETE` | All agents done; `is_task_complete=true` | Apply final `proposed_changes`; pipeline finished |
+| `DEPLOYMENT_GUIDE_READY` | Manual deployment guide written | See `guide_path` for the generated file |
 
 ### State schema (`src/state.py`)
 
@@ -159,15 +232,32 @@ SEagenthub (FastMCP)  ←  src/main.py
 |---|---|---|
 | `messages` | `list[BaseMessage]` | Full conversation history |
 | `next_node` | `str` | Node name the supervisor selected next |
-| `github_url` | `str` | Repo URL passed from the tool |
-| `repo_path` | `str` | Absolute local path after `codeCrafter` clones the repo |
+| `project_path` | `str` | Absolute local path to the project directory |
+| `repo_path` | `str` | Working directory (same as `project_path` in local-first mode) |
 | `test_passed` | `bool` | Set by `qualityGuard`; gates `devOps` deployment |
 | `task_description` | `str` | Human-readable goal forwarded from the MCP tool |
-| `completed_agents` | `list[str]` | Agents that have already run this invocation |
+| `completed_agents` | `list[str]` | Agents that have already run this session |
+| `file_operations` | `list[FileOperation]` | Accumulated file create/update/delete ops for the IDE |
 | `pending_refactor_proposal` | `RefactorProposal \| None` | Out-of-scope refactor awaiting user approval |
 | `active_subtasks` | `list[str]` | Approved refactors appended to `project_state.md` |
 | `user_approval` | `str \| None` | `"Approve"` or `"Manual"` from the tech lead gate |
 | `deployment_guide_path` | `str \| None` | Path to `docs/deployment_guide.md` when Manual selected |
+
+### Session persistence (`src/pipeline.py`)
+
+Each `start_pipeline` call creates a session file at `{project_path}/.seahub/session.json`:
+
+```json
+{
+  "session_id": "<hex uuid>",
+  "project_path": "/abs/path/to/project",
+  "task_description": "...",
+  "completed_agents": ["architect"],
+  "pending_verification_paths": [".agenthub_run"]
+}
+```
+
+`advance_step` reads this file before invoking the next agent. If `pending_verification_paths` contains any path that does not exist on disk, the call returns `WAITING_FOR_FILES` and re-registers the thread — the pipeline does not advance. `start_pipeline` also reads any prior session to surface previous progress as context.
 
 ### Human-in-the-loop gates
 
@@ -181,8 +271,8 @@ The graph has two `interrupt()` pause points:
 Resume an interrupted run:
 
 ```python
-resume_refactor_decision(thread_id, approved: bool)
-resume_deployment_decision(thread_id, decision: str)  # "Approve" or "Manual"
+resume_refactor_decision(thread_id, decision="Yes"|"No")
+resume_deployment_decision(thread_id, decision="Approve"|"Manual")
 ```
 
 ### Running the server
@@ -210,37 +300,55 @@ SEagenthub                        # stdio (default)
 SEagenthub --transport=sse        # SSE for VS Code / Cursor
 ```
 
-### The `execute_software_pipeline` tool
+### Tool reference
 
-```python
-execute_software_pipeline(
-    github_repo_url: str,   # e.g. "https://github.com/owner/repo"
-    task_description: str,  # e.g. "Add input validation to /checkout and deploy to staging"
-) -> str                    # human-readable agent timeline + test/deploy status
+#### `techLead(project_path, task_description)`
+
+Start a new pipeline run. Reads any prior `.seahub/session.json` to surface prior context, injects `.github/shared/` templates if absent, runs the architect agent, and returns `STEP_COMPLETE`.
+
+```json
+{
+  "status": "STEP_COMPLETE",
+  "session_id": "a3f8...",
+  "continuation_token": "a3f8...",
+  "current_agent": "architect",
+  "proposed_changes": [
+    { "path": ".github/shared/architecture_log.md", "content": "...", "action": "update" },
+    { "path": ".github/shared/project_context.md",  "content": "...", "action": "create" }
+  ],
+  "next_agent_instruction": "Architecture scaffold proposed. Apply the files above to disk, then call advance_pipeline — CodeCrafter will read the local filesystem to verify compatibility before beginning implementation.",
+  "is_task_complete": false,
+  "requires_approval": false,
+  "completed_tasks": ["architect"],
+  "pending_tasks": ["codeCrafter", "codeReviewer", "qualityGuard", "tech_lead_gate", "devOps"]
+}
 ```
 
-Example output:
+#### `advance_pipeline(continuation_token)`
 
-```
-AgentHub pipeline complete for https://github.com/owner/repo
+Advance to the next agent. Verifies all `pending_verification_paths` exist on disk first.
 
-[HumanMessage]  Repository: https://github.com/owner/repo  |  Task: Add input validation...
-[architect]     Task processed.
-[codeCrafter]   Clone ✓ | commit: True | push: pushed to origin
-[codeReviewer]  Task processed.
-[qualityGuard]  Tests PASSED — 42 passed, 0 failed
-[devOps]        Deployment triggered. HTTP 200 — {"ok":true}
+**If files are present** → runs the next agent, returns `STEP_COMPLETE`.
 
-Tests passed : True
-Agents run   : architect, codeCrafter, codeReviewer, qualityGuard, devOps
+**If files are missing** → returns `WAITING_FOR_FILES` without advancing:
+
+```json
+{
+  "status": "WAITING_FOR_FILES",
+  "session_id": "a3f8...",
+  "continuation_token": "a3f8...",
+  "missing_files": [".agenthub_run"],
+  "next_agent_instruction": "I am waiting for the previous changes to be applied to the filesystem before I can proceed with the codeReviewer phase. Please write the following files to disk and then call advance_pipeline again: `.agenthub_run`",
+  "is_task_complete": false
+}
 ```
 
 ### Environment variables
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GITHUB_TOKEN` | Optional | PAT for authenticated `git push` in `codeCrafter` |
 | `DEPLOY_DASHBOARD_URL` | Optional | POST endpoint called by `devOps` after tests pass |
+| `PORT` | Optional | HTTP port override (default 8080); selects `streamable-http` transport |
 
 No `OPENAI_API_KEY` required — the supervisor is fully deterministic.
 
@@ -255,7 +363,6 @@ When the pipeline first processes a target repository, `inject_shared_templates(
 ### Step 1 — Install the package
 
 ```bash
-# Clone or copy the SEagenthub repo, then install it
 git clone https://github.com/your-org/SEagenthub
 cd SEagenthub
 pip install -e .
@@ -316,7 +423,23 @@ Or just describe the change in plain language — @techLead detects this automat
 
 ## Daily Usage
 
-### Start a new task
+### Start a new task via MCP
+
+```python
+# Step 1 — start the pipeline
+result = techLead(
+    project_path="/abs/path/to/your-project",
+    task_description="Add input validation to /checkout and deploy to staging"
+)
+# Write result["proposed_changes"] to disk
+# Follow result["next_agent_instruction"]
+
+# Step 2 — advance (repeat until is_task_complete=true)
+result = advance_pipeline(continuation_token=result["continuation_token"])
+# Write result["proposed_changes"] to disk, then advance again
+```
+
+### Start a new task via prompt agents
 
 ```
 @techLead INIT_PROJECT: Build a booking cancellation Lambda that marks DynamoDB records as cancelled and publishes a BookingCancelled event to EventBridge
@@ -334,30 +457,22 @@ Or just describe the change in plain language — @techLead detects this automat
 @techLead DELEGATE [architect]: design the EventBridge rule and DLQ for the cancellation flow
 ```
 
-### Audit quality results and proceed to deployment
-
-```
-@techLead AUDIT_RESULT
-```
-
 ### The automatic chain
 
 ```
 INIT_PROJECT
-  → @architect    (design + ADRs)
-  → @codeCrafter  (implement)
-  → @codeReviewer (review)
-  → @qualityGuard (test + security)
+  → @architect    (design + ADRs)        → STEP_COMPLETE → write files → advance
+  → @codeCrafter  (implement)            → STEP_COMPLETE → write files → advance
+  → @codeReviewer (review)               → STEP_COMPLETE → write files → advance
+  → @qualityGuard (test + security)      → STEP_COMPLETE [requires_approval=true]
   → AUDIT_RESULT
-  → @devOps       (deploy + verify)
-  → done
+  → @devOps       (deploy + verify)      → PIPELINE_COMPLETE
+  → done (is_task_complete=true)
 ```
 
-When running via the `SEagenthub` MCP tool the server executes this sequence end-to-end. When working through prompt-driven agents in an IDE you direct the session — signal phrases tell the AI which agent activates next.
-
-You only need to intervene at two points:
-- **After @architect:** approve ADRs, then write `Cleared for implementation`
-- **After @qualityGuard:** run `AUDIT_RESULT` to trigger @devOps
+You only need to intervene at two points via MCP:
+- **Before @qualityGuard:** `requires_approval=true` — confirm with user before calling `advance_pipeline`
+- **At deployment gate:** call `resume_deployment_decision("Approve" or "Manual")`
 
 ---
 
@@ -375,9 +490,10 @@ The only agent you address directly. All others are triggered by signal phrases.
 | `AUDIT_RESULT` | After @qualityGuard finishes — triggers @devOps if gate clears |
 
 **Reads before every response:**
-1. `.github/shared/project_context.md` ← creates it if missing
-2. `.github/shared/project_state.md`
-3. `.github/shared/standards.md`
+1. `.seahub/session.json` ← resumes prior session context
+2. `.github/shared/project_context.md` ← creates it if missing
+3. `.github/shared/project_state.md`
+4. `.github/shared/standards.md`
 
 ---
 
@@ -428,11 +544,15 @@ End signal: `Refactoring complete. Handing off to @codeReviewer.`
 
 **Out-of-scope refactor detection:** If `codeCrafter` identifies a bottleneck in a file outside the task scope it emits a `REFACTOR_PROPOSAL` and pauses for user approval. Approved proposals are appended to `project_state.md` as new subtasks.
 
+**Filesystem verification:** Before `codeCrafter` runs, `advance_pipeline` verifies the architect's `proposed_changes` exist on disk. CodeCrafter reads those local files before writing new ones, ensuring implementation is compatible with the proposed architecture.
+
 ---
 
 ### @codeReviewer
 
 Runs automatically on `Handing off to @codeReviewer`. Any FAIL returns work to @codeCrafter immediately — the chain does not continue.
+
+**Before running**, CodeReviewer reads the local files produced by CodeCrafter (not an assumption — actual filesystem read) to validate alignment with the ADR.
 
 **Skills (in order):**
 
@@ -455,6 +575,8 @@ End signal: `Documentation check complete. Handing off to @qualityGuard.`
 ### @qualityGuard
 
 Runs automatically on `Handing off to @qualityGuard`. A `SECURITY FAIL:` from any skill blocks the entire workflow.
+
+**Before running**, QualityGuard confirms local files are present (verified by `advance_pipeline`) and runs tests against the actual filesystem state.
 
 **Skills (in order):**
 
@@ -611,12 +733,18 @@ The `.github/shared/` directory is the single source of truth for all agents acr
 
 | File | Owner | Purpose |
 |---|---|---|
-| `project_context.md` | @techLead | Tech stack, directory structure, entry points, env vars, integration boundaries, known constraints, threat model. Created at `INIT_PROJECT`. |
+| `project_context.md` | @techLead | Tech stack, directory structure, entry points, env vars, integration boundaries, known constraints, threat model. Created at `INIT_PROJECT`. Updated after every agent completes. |
 | `project_state.md` | @techLead | Task board (`T-001`, ...), architecture snapshot, open risks, technical debt register, deployment history. |
 | `architecture_log.md` | @architect | ADR ledger — one entry per architectural decision. Never delete entries. |
 | `standards.md` | @techLead | Engineering law — all agents defer to this. §1 AWS/IaC · §2 Coding · §3 Testing · §4 Docs · §5 UI/UX · §6 Performance · §7 Agent Rules. |
 
 Blank templates for these files are in `templates/` and are auto-injected into target repos by `src/orchestrator.py::inject_shared_templates()`.
+
+**Session state** (written by `src/pipeline.py`):
+
+| File | Purpose |
+|---|---|
+| `.seahub/session.json` | Active session: `session_id`, `completed_agents`, `pending_verification_paths`. Read before every agent call. |
 
 ---
 
@@ -646,11 +774,12 @@ Blank templates for these files are in `templates/` and are auto-injected into t
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `advance_pipeline` returns `WAITING_FOR_FILES` | `proposed_changes` from the last step were not written to disk | Write all files listed in `missing_files` to disk, then call `advance_pipeline` again |
 | Agent ignores a handoff phrase | Phrase was paraphrased | Copy the exact phrase from the OUTPUT CONTRACT |
 | `SECURITY FAIL:` does not stop the chain | Missing colon in the phrase | Write `SECURITY FAIL: [description]` with the colon |
-| `codeCrafter` loops — keeps re-running | `pending_refactor_proposal` not cleared | Call `resume_refactor_decision(thread_id, approved=False)` |
+| `codeCrafter` loops — keeps re-running | `pending_refactor_proposal` not cleared | Call `resume_refactor_decision(thread_id, decision="No")` |
 | MCP server not found in Cursor | Wrong path or `cwd` in `mcp.json` | Confirm `cwd` is the SEagenthub directory and `args` points to `src/main.py` |
 | Template injection skipped | `.github/shared/` already exists in target repo | Delete the directory to re-trigger injection |
+| Session not found after server restart | `_active_threads` is in-memory only | Start a new pipeline with `techLead`; prior `.seahub/session.json` provides context |
 | Tests fail in `qualityGuard` | No pytest in target repo | Add `pytest` to `requirements.txt` and re-run |
 | Deployment skipped | `test_passed == False` | Fix failing tests; `devOps` will not run until tests pass |
-

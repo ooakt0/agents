@@ -23,8 +23,15 @@ src/                            ← MCP server source (main.py, orchestrator.py,
 
 All paths inside skill files are relative — nothing is hardcoded to a specific project.
 
-The MCP server (`src/main.py`) automatically injects the files in `templates/` into a
-target repository's `.github/shared/` directory the first time it processes that repo,
+The MCP server (`src/main.py`) runs the pipeline using a **Step-and-Wait protocol**:
+after each agent step it returns `proposed_changes` (files to write) and a
+`next_agent_instruction`. The IDE must write those files to disk before calling
+`advance_pipeline` — if files are missing the server returns `WAITING_FOR_FILES`
+and refuses to proceed. Session state persists in `{project_path}/.seahub/session.json`
+so the TechLead reads it before every agent call to resume where it left off.
+
+The MCP server also automatically injects the files in `templates/` into a target
+repository's `.github/shared/` directory the first time it processes that repo,
 so agents have a correctly structured `project_context.md`, `project_state.md`,
 `standards.md`, and `architecture_log.md` without any manual setup.
 
@@ -133,11 +140,12 @@ Task Board, and begin delegating using `prompts/skills/techLead/handoff_template
 
 | File | Owner | Purpose |
 |------|-------|---------|
-| `.github/shared/project_context.md` | @techLead | **READ FIRST by all agents.** Tech stack, directory structure, entry points, env vars, integration boundaries, known constraints, recent changes. Created at INIT_PROJECT. |
+| `.github/shared/project_context.md` | @techLead | **READ FIRST by all agents.** Tech stack, directory structure, entry points, env vars, integration boundaries, known constraints, recent changes. Created at INIT_PROJECT. Updated after every agent step. |
 | `.github/shared/standards.md` | @techLead | The law. All agents defer to this. Do not modify without consensus. |
 | `.github/shared/project_state.md` | @techLead | Living task board. Read before every action. Update after every handoff. |
 | `.github/shared/architecture_log.md` | @architect | ADR ledger. Every design decision recorded here. |
 | `prompts/skills/techLead/handoff_template.md` | @techLead | Required for every DELEGATE command. |
+| `.seahub/session.json` | MCP server | **Step-and-Wait session state.** Written by `src/pipeline.py` after every step. Stores `session_id`, `completed_agents`, and `pending_verification_paths`. Read before every agent call so TechLead knows where it left off. |
 
 **Source templates** (used by the MCP server to initialise `.github/shared/` in new repos):
 
@@ -156,6 +164,39 @@ Signal phrases are evaluated deterministically by the LangGraph state machine in
 When using the MCP server (`src/main.py`), no hook scripts are required — the graph advances
 automatically when a node emits the correct signal phrase. When using prompt-driven agents in an
 IDE (Copilot, Claude Code), the same phrases drive the conversational handoff.
+
+### Step-and-Wait Protocol (MCP server)
+
+The MCP server enforces a **Step-and-Wait** loop between each agent:
+
+```
+IDE calls techLead(project_path, task)
+  → architect runs → STEP_COMPLETE returned
+  → IDE writes proposed_changes to disk
+  → IDE calls advance_pipeline(continuation_token)
+      → pipeline.py reads .seahub/session.json
+      → pipeline.py reads .github/shared/project_context.md
+      → verifies pending_verification_paths exist on disk
+      → if missing: returns WAITING_FOR_FILES (no state change; retry after writing files)
+      → if present: next agent runs → STEP_COMPLETE returned
+  → repeat until is_task_complete=true
+```
+
+**Response fields** present on every tool call:
+
+| Field | Description |
+|---|---|
+| `status` | `STEP_COMPLETE` \| `WAITING_FOR_FILES` \| `PIPELINE_PAUSED` \| `PIPELINE_COMPLETE` \| `DEPLOYMENT_GUIDE_READY` |
+| `session_id` | Stable identifier written to `.seahub/session.json` |
+| `continuation_token` | Pass to `advance_pipeline` (same value as `session_id`) |
+| `proposed_changes` | Files the IDE must write to disk before the next call |
+| `next_agent_instruction` | Exact instruction for what to do after writing the files |
+| `is_task_complete` | `true` only on `PIPELINE_COMPLETE` — signals the full SDLC is done |
+| `requires_approval` | `true` before `qualityGuard` — confirm with user before advancing |
+
+**WAITING_FOR_FILES** is returned (and the pipeline does NOT advance) when any file from the
+previous `proposed_changes` does not exist on disk. The `missing_files` field lists exactly
+which paths must be written before calling `advance_pipeline` again.
 
 ### Signal Phrase Contract
 
@@ -282,6 +323,8 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 - All skill files use root-relative paths (`prompts/skills/[agent]/[skill].md`) — no absolute paths
 - `project_state.md` and `architecture_log.md` are templates — fill `[placeholders]` during INIT_PROJECT
 - `templates/` files are auto-injected into `.github/shared/` in target repos by `src/orchestrator.py::inject_shared_templates()`
+- Session state is written to `{project_path}/.seahub/session.json` by `src/pipeline.py` — do not delete this file mid-pipeline
+- `proposed_changes` uses forward-slash paths relative to `project_path`; `src/pipeline.py` resolves them with `pathlib.Path` for cross-platform compatibility
 
 ---
 
@@ -294,77 +337,3 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 5. Add agent to the Agent Directory table and workflow diagram in this file
 6. Add routing section to `.github/copilot-instructions.md`
 7. Update `prompts/skills/techLead/system_prompt.md` Agent Directory
-- `.github/skills/architect/observability_design.md` — CloudWatch alarms, structured logs, X-Ray tracing *(WAF: Operational Excellence)*
-- `.github/skills/architect/reliability_design.md` — Failure modes, RTO/RPO, DLQ config, Multi-AZ *(WAF: Reliability)*
-- `.github/skills/architect/disaster_recovery_strategy.md` — Multi-region failover, PITR, circuit breakers, DR runbook *(WAF: Reliability)*
-- `.github/skills/architect/data_sovereignty_privacy.md` — PII isolation, data residency, retention, CMK encryption *(WAF: Security)*
-- `.github/skills/architect/generate_cdk_boilerplate.md` — CDK v2 TypeScript stacks, tagging, private subnets
-- `.github/skills/architect/security_group_audit.md` — IAM least privilege, encryption, networking *(WAF: Security)*
-- `.github/skills/architect/cost_estimation.md` — Dev vs Prod sizing, idle-cost anti-patterns *(WAF: Cost)*
-- `.github/skills/architect/legacy_integration_bridge.md` — Adapter/Facade/ACL patterns, resilience wrapping, data mapping *(WAF: Reliability)*
-- `.github/skills/architect/adr_generation.md` — Formal ADR per decision, alternatives evaluated, reversibility rated *(WAF: Operational Excellence)*
-
-### @codeCrafter (Implementation Phase) — execution order
-- `.github/skills/codeCrafter/api_contract_design.md` — TypeScript interfaces, endpoint specs, StandardErrorResponse *(WAF: Operational Excellence)*
-- `.github/skills/codeCrafter/add_dependencies.md` — CVE audit, license check, exact version pinning
-- `.github/skills/codeCrafter/secure_coding_standards.md` — Input validation (Zod/Pydantic), injection prevention, OWASP shift-left *(WAF: Security)*
-- `.github/skills/codeCrafter/implement_logic.md` — TypeScript strict, ≤30 lines/fn, custom error classes
-- `.github/skills/codeCrafter/error_handling_strategy.md` — Domain error hierarchy, central handler, safe error messages *(WAF: Reliability)*
-- `.github/skills/codeCrafter/ui_component_generator.md` — Atomic Design, Tailwind, ARIA accessibility *(if UI task)*
-- `.github/skills/codeCrafter/resilience_patterns.md` — Retry backoff, idempotency, DLQ wiring *(WAF: Reliability)*
-- `.github/skills/codeCrafter/performance_optimization.md` — N+1 fix, pagination, caching, Lambda cold start *(WAF: Performance Efficiency)*
-- `.github/skills/codeCrafter/refactoring_refinement.md` — DRY, SOLID, code smells, design patterns, naming *(WAF: Operational Excellence)*
-
-### @codeReviewer (Review Phase) — execution order
-- `.github/skills/codeReviewer/architectural_alignment_audit.md` — ADR conformance, service boundary enforcement, undocumented decisions *(WAF: Operational Excellence)*
-- `.github/skills/codeReviewer/breaking_change_detection.md` — Exported interface diffs, API payload changes, schema migrations, event contract changes *(WAF: Reliability)*
-- `.github/skills/codeReviewer/security_surface_analysis.md` — Authorization gaps, PII in logs, IAM least privilege, injection surface, secrets *(WAF: Security)*
-- `.github/skills/codeReviewer/complexity_check.md` — Function size, nesting depth, promise chains
-- `.github/skills/codeReviewer/naming_audit.md` — PascalCase / camelCase / UPPER_SNAKE_CASE enforcement
-- `.github/skills/codeReviewer/performance_regression_check.md` — N+1 queries, unbounded results, hot-path allocations, Lambda cold start, cache misses *(WAF: Performance Efficiency)*
-- `.github/skills/codeReviewer/dependency_audit.md` — Staleness, CVE rescan, GPL license drift *(WAF: Security)*
-- `.github/skills/codeReviewer/testability_maintainability_audit.md` — Hardcoded deps, static I/O, monolithic functions, interface coverage, fixture burden *(WAF: Operational Excellence)*
-- `.github/skills/codeReviewer/documentation_check.md` — README, .env.example, no TODO/FIXME *(WAF: Operational Excellence)*
-
-### @qualityGuard (Quality Phase) — execution order
-- `.github/skills/qualityGuard/automated_threat_modeling.md` — STRIDE analysis, IAM least-privilege audit, encryption check *(WAF: Security)*
-- `.github/skills/qualityGuard/contract_testing_verification.md` — Pact consumer-driven contracts, breaking payload detection *(WAF: Reliability)*
-- `.github/skills/qualityGuard/compliance_as_code_audit.md` — SOC 2 / PCI-DSS / GDPR checklists, log retention, drift check *(WAF: Security)*
-- `.github/skills/qualityGuard/write_unit_tests.md` — Jest, ≥80% branch coverage, aws-sdk-client-mock
-- `.github/skills/qualityGuard/mock_aws_responses.md` — Typed mock barrel with realistic data
-- `.github/skills/qualityGuard/integration_test.md` — LocalStack end-to-end, DLQ flow, idempotency *(WAF: Reliability)*
-- `.github/skills/qualityGuard/chaos_engineering_simulation.md` — Failure injection, cascade prevention, RTO/RPO assertion *(WAF: Reliability)*
-- `.github/skills/qualityGuard/performance_benchmark_gate.md` — Artillery SLO gate, P99 regression detection, cold start check *(WAF: Performance Efficiency)*
-- `.github/skills/qualityGuard/penetration_scan.md` — Secret scan, OWASP Top 10, PII in logs *(WAF: Security)*
-
-### @devOps (Deployment Phase) — execution order
-- `.github/skills/devOps/pipeline_setup.md` — GitHub Actions CI/CD, OIDC auth, no long-lived keys *(WAF: Operational Excellence)*
-- `.github/skills/devOps/deployment_strategy_engine.md` — Blue/Green or Canary selection, warm-state preservation, CodeDeploy wiring *(WAF: Reliability)*
-- `.github/skills/devOps/finops_cost_governance.md` — Cost delta estimation, idle-cost anti-patterns, tag compliance, budget gate *(WAF: Cost Optimization)*
-- `.github/skills/devOps/observability_provisioning.md` — CloudWatch alarms/dashboards, X-Ray tracing, log retention *(WAF: Operational Excellence)*
-- `.github/skills/devOps/environment_promotion.md` — dev→staging→prod gates, canary routing, rollback strategy *(WAF: Reliability)*
-- `.github/skills/devOps/deployment_verification.md` — CloudWatch alarm check, DLQ=0, canary health *(WAF: Operational Excellence)*
-- `.github/skills/devOps/automated_rollback_logic.md` — Trigger thresholds, alias/TG flip, git revert, Last Known Good state *(WAF: Reliability)*
-- `.github/skills/devOps/drift_detection_audit.md` — CDK diff vs live, IAM/SG drift, tag compliance, IaC enforcement *(WAF: Operational Excellence)*
-- `.github/skills/devOps/deployment_guide.md` — Human-executable guide with exact CDK/CLI commands, verification steps, rollback plan *(MANUAL_DEPLOY_REQUESTED path)*
-
----
-
-## Portability Notes
-
-- All skill files use root-relative paths (`.github/skills/[agent]/[skill].md`) — no absolute paths
-- `project_state.md` and `architecture_log.md` are templates — fill `[placeholders]` during INIT_PROJECT
-
-**Legacy path note:** Older files reference `AGENTS/` prefix. Treat `AGENTS/shared/foo.md`
-as equivalent to `.github/shared/foo.md` — the prefix is a legacy convention.
-
----
-
-## Adding a New Agent
-
-1. Create a new folder: `newAgent/`
-2. Add skill files: `ROLE & ACTIVATION` / `INPUTS` / `PROCESS` / `OUTPUT CONTRACT`
-3. Define exact signal phrase(s) in OUTPUT CONTRACT
-4. Add agent to the Agent Directory table and workflow diagram in this file
-5. Add routing section to `.github/copilot-instructions.md`
-6. Update `.github/skills/techLead/system_prompt.md` Agent Directory

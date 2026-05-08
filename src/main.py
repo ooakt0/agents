@@ -1,9 +1,14 @@
 """
-SEagenthub MCP Server — Incremental Interactive Workflow.
+SEagenthub MCP Server — Step-and-Wait Interactive Protocol.
 
 The pipeline runs one agent at a time.  After each step the IDE receives a
-STEP_COMPLETE response with files_to_create and a continuation_token.  The IDE
-writes the files locally, then calls advance_pipeline to trigger the next agent.
+STEP_COMPLETE response with proposed_changes and a next_agent_instruction.
+The IDE MUST write the files to disk, then call advance_pipeline.  If the
+files are not on disk when advance_pipeline is called, the server returns
+WAITING_FOR_FILES and refuses to proceed.
+
+Session state is persisted in {project_path}/.seahub/session.json so the
+TechLead can read it before every agent call and resume where it left off.
 
 Usage
 -----
@@ -26,26 +31,41 @@ from src.pipeline import advance_step, resume_deployment, resume_refactor, start
 
 mcp: FastMCP = FastMCP(
     "SEagenthub",
-    version="2.0.0",
+    version="3.0.0",
     instructions=(
         "SEagenthub is a 6-agent AI engineering framework covering the full SDLC "
         "across all 6 AWS Well-Architected pillars.\n\n"
-        "INCREMENTAL WORKFLOW\n"
+        "STEP-AND-WAIT PROTOCOL\n"
+        "  Every response includes:\n"
+        "    proposed_changes       — files the IDE must write to disk\n"
+        "    next_agent_instruction — exact instruction to follow after applying files\n"
+        "    is_task_complete       — false until all 6 agents have verified their work\n\n"
+        "  RULE: The IDE must apply ALL proposed_changes before calling advance_pipeline.\n"
+        "  If files are missing, advance_pipeline returns WAITING_FOR_FILES and blocks.\n\n"
+        "WORKFLOW\n"
         "  1. Call techLead — architect runs first.\n"
-        "     → STEP_COMPLETE: write files_to_create to disk, note the continuation_token.\n"
+        "     → STEP_COMPLETE: write proposed_changes to disk.\n"
+        "     → Follow next_agent_instruction (usually: call advance_pipeline).\n"
         "  2. Call advance_pipeline(continuation_token) to trigger the next agent.\n"
-        "     Repeat until status=PIPELINE_COMPLETE.\n"
+        "     The server verifies all proposed_changes exist on disk before proceeding.\n"
+        "     Repeat until is_task_complete=true.\n"
         "  3. requires_approval=true means confirm with the user before advancing.\n"
-        "  4. status=PIPELINE_PAUSED means a decision is required — use a resume tool.\n\n"
+        "  4. status=PIPELINE_PAUSED means a decision is required — use a resume tool.\n"
+        "  5. status=WAITING_FOR_FILES means previous files must be written first.\n\n"
+        "STATE PERSISTENCE\n"
+        "  Session metadata is written to {project_path}/.seahub/session.json.\n"
+        "  The TechLead reads this file before every agent call to resume correctly.\n"
+        "  .github/shared/project_context.md tracks completed and pending tasks.\n\n"
         "TOOLS\n"
         "  techLead                    — start a new pipeline run\n"
         "  advance_pipeline            — proceed to the next agent step\n"
         "  resume_refactor_decision    — approve or reject an out-of-scope refactor\n"
         "  resume_deployment_decision  — choose automated deploy or a manual guide\n\n"
         "RESPONSE STATUS VALUES\n"
-        "  STEP_COMPLETE          — agent finished; files_to_create is ready to write\n"
-        "  PIPELINE_PAUSED        — user decision required\n"
-        "  PIPELINE_COMPLETE      — full SDLC done\n"
+        "  STEP_COMPLETE          — agent finished; write proposed_changes then advance\n"
+        "  WAITING_FOR_FILES      — previous files not on disk; write them and retry\n"
+        "  PIPELINE_PAUSED        — user decision required before proceeding\n"
+        "  PIPELINE_COMPLETE      — full SDLC done; is_task_complete=true\n"
         "  DEPLOYMENT_GUIDE_READY — manual deployment guide written\n"
     ),
 )
@@ -55,9 +75,13 @@ mcp: FastMCP = FastMCP(
 def techLead(project_path: str, task_description: str) -> str:
     """Start the 6-agent SDLC pipeline on a local project directory.
 
-    Runs architect first and returns a STEP_COMPLETE response immediately.
-    The IDE should write files_to_create to disk, then call advance_pipeline
-    with the continuation_token to proceed to the next agent (codeCrafter).
+    Reads any prior session from {project_path}/.seahub/session.json so the
+    TechLead can resume where a previous run left off.  Runs the architect
+    agent first and returns a STEP_COMPLETE response immediately.
+
+    The IDE must:
+      1. Write all files listed in proposed_changes to disk.
+      2. Follow next_agent_instruction (call advance_pipeline when ready).
 
     Shared-state templates (.github/shared/) are injected into the project
     directory if they do not already exist.
@@ -67,8 +91,9 @@ def techLead(project_path: str, task_description: str) -> str:
         task_description: Plain-English description of the task to accomplish.
 
     Returns:
-        JSON — status=STEP_COMPLETE with continuation_token, files_to_create,
-        status_update, requires_approval, completed_tasks, pending_tasks.
+        JSON with fields: status, session_id, continuation_token, current_agent,
+        proposed_changes, next_agent_instruction, is_task_complete,
+        requires_approval, completed_tasks, pending_tasks, status_update.
     """
     return start_pipeline(project_path, task_description)
 
@@ -77,15 +102,23 @@ def techLead(project_path: str, task_description: str) -> str:
 def advance_pipeline(continuation_token: str) -> str:
     """Advance the pipeline to the next agent step.
 
-    Call this after writing the files from the previous STEP_COMPLETE response
-    to disk.  If requires_approval was true, confirm with the user first.
+    IMPORTANT: Call this only AFTER writing all files from the previous
+    proposed_changes to disk.  If any required file is missing the server
+    returns WAITING_FOR_FILES and does NOT advance — write the files and
+    call advance_pipeline again.
+
+    The server reads {project_path}/.seahub/session.json and
+    .github/shared/project_context.md before invoking the next agent,
+    so the agent sees the verified local filesystem state.
 
     Args:
         continuation_token: The token from the previous STEP_COMPLETE response.
 
     Returns:
-        JSON — status=STEP_COMPLETE | PIPELINE_PAUSED | PIPELINE_COMPLETE
-        | DEPLOYMENT_GUIDE_READY.
+        JSON — status: STEP_COMPLETE | WAITING_FOR_FILES | PIPELINE_PAUSED
+        | PIPELINE_COMPLETE | DEPLOYMENT_GUIDE_READY.
+        Every response includes proposed_changes, next_agent_instruction,
+        and is_task_complete.
     """
     return advance_step(continuation_token)
 
@@ -99,7 +132,8 @@ def resume_refactor_decision(thread_id: str, decision: str) -> str:
         decision:  'Yes' to approve the refactor, 'No' to skip it.
 
     Returns:
-        JSON — status=STEP_COMPLETE | PIPELINE_PAUSED | PIPELINE_COMPLETE.
+        JSON — status: STEP_COMPLETE | PIPELINE_PAUSED | PIPELINE_COMPLETE.
+        Includes proposed_changes, next_agent_instruction, is_task_complete.
     """
     return resume_refactor(thread_id, decision)
 
@@ -113,7 +147,8 @@ def resume_deployment_decision(thread_id: str, decision: str) -> str:
         decision:  'Approve' for automated deployment, 'Manual' for a guide file.
 
     Returns:
-        JSON — status=STEP_COMPLETE | PIPELINE_COMPLETE | DEPLOYMENT_GUIDE_READY.
+        JSON — status: STEP_COMPLETE | PIPELINE_COMPLETE | DEPLOYMENT_GUIDE_READY.
+        Includes proposed_changes, next_agent_instruction, is_task_complete.
     """
     return resume_deployment(thread_id, decision)
 
