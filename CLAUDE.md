@@ -14,13 +14,19 @@ Copy these items to your project root:
 .claude/settings.json           ← shared state config (auto-loaded by Claude Code)
 .github/copilot-instructions.md ← agent routing for GitHub Copilot
 CLAUDE.md                       ← this file (auto-loaded by Claude Code)
-.github/shared/                 ← state files and standards
-.github/agents/                 ← GitHub Copilot agent personas
-.github/skills/                 ← all agent skill files
+prompts/agents/                 ← agent persona files (* .agent.md)
+prompts/skills/                 ← all agent skill files, organised by agent
+templates/                      ← canonical .github/shared/ files (injected by MCP server)
+src/                            ← MCP server source (main.py, orchestrator.py, nodes/)
 .claude/skills/                 ← Claude Code skill descriptors
 ```
 
 All paths inside skill files are relative — nothing is hardcoded to a specific project.
+
+The MCP server (`src/main.py`) automatically injects the files in `templates/` into a
+target repository's `.github/shared/` directory the first time it processes that repo,
+so agents have a correctly structured `project_context.md`, `project_state.md`,
+`standards.md`, and `architecture_log.md` without any manual setup.
 
 ---
 
@@ -28,12 +34,12 @@ All paths inside skill files are relative — nothing is hardcoded to a specific
 
 | Agent | Folder | Activated By | WAF Pillars |
 |-------|--------|-------------|------------|
-| @techLead | `.github/skills/techLead/` | User command | All (orchestration) |
-| @architect | `.github/skills/architect/` | `DELEGATE [architect]` | Operational Excellence, Security, Reliability, Cost |
-| @codeCrafter | `.github/skills/codeCrafter/` | `DELEGATE [codeCrafter]` | Reliability, Performance |
-| @codeReviewer | `.github/skills/codeReviewer/` | @codeCrafter handoff | Security, Operational Excellence |
-| @qualityGuard | `.github/skills/qualityGuard/` | @codeReviewer handoff | Reliability, Security, Performance |
-| @devOps | `.github/skills/devOps/` | `DELEGATE [devOps]` | Operational Excellence, Reliability |
+| @techLead | `prompts/skills/techLead/` | User command | All (orchestration) |
+| @architect | `prompts/skills/architect/` | `DELEGATE [architect]` | Operational Excellence, Security, Reliability, Cost |
+| @codeCrafter | `prompts/skills/codeCrafter/` | `DELEGATE [codeCrafter]` | Reliability, Performance |
+| @codeReviewer | `prompts/skills/codeReviewer/` | @codeCrafter handoff | Security, Operational Excellence |
+| @qualityGuard | `prompts/skills/qualityGuard/` | @codeReviewer handoff | Reliability, Security, Performance |
+| @devOps | `prompts/skills/devOps/` | `DELEGATE [devOps]` | Operational Excellence, Reliability |
 
 ---
 
@@ -119,7 +125,7 @@ No step may be skipped. Every agent hands off using exact signal phrases written
 ```
 
 @techLead will read `.github/shared/project_state.md`, break the goal into atomic tasks, update the
-Task Board, and begin delegating using `.github/skills/techLead/handoff_template.md`.
+Task Board, and begin delegating using `prompts/skills/techLead/handoff_template.md`.
 
 ---
 
@@ -131,17 +137,25 @@ Task Board, and begin delegating using `.github/skills/techLead/handoff_template
 | `.github/shared/standards.md` | @techLead | The law. All agents defer to this. Do not modify without consensus. |
 | `.github/shared/project_state.md` | @techLead | Living task board. Read before every action. Update after every handoff. |
 | `.github/shared/architecture_log.md` | @architect | ADR ledger. Every design decision recorded here. |
-| `.github/skills/techLead/handoff_template.md` | @techLead | Required for every DELEGATE command. |
+| `prompts/skills/techLead/handoff_template.md` | @techLead | Required for every DELEGATE command. |
+
+**Source templates** (used by the MCP server to initialise `.github/shared/` in new repos):
+
+| Template | Injected to |
+|---|---|
+| `templates/project_context.md` | `.github/shared/project_context.md` |
+| `templates/project_state.md` | `.github/shared/project_state.md` |
+| `templates/standards.md` | `.github/shared/standards.md` |
+| `templates/architecture_log.md` | `.github/shared/architecture_log.md` |
 
 ---
 
-## Hook Behavior (Automatic)
+## Signal Routing (LangGraph)
 
-| Hook | Script | Trigger |
-|------|--------|---------|
-| PostToolUse (Write/Edit) | `.github/hooks/on_write.ps1` | Routes between agents on signal phrase detection |
-| PostToolUse (Write) | `.github/hooks/on_task_complete.ps1` | Outputs full DoD checklist when ✅ DONE appears in project_state.md |
-| Stop | `.github/hooks/on_stop.ps1` | Reminds about open 🏗️ ACTIVE tasks at session end |
+Signal phrases are evaluated deterministically by the LangGraph state machine in `src/orchestrator.py`.
+When using the MCP server (`src/main.py`), no hook scripts are required — the graph advances
+automatically when a node emits the correct signal phrase. When using prompt-driven agents in an
+IDE (Copilot, Claude Code), the same phrases drive the conversational handoff.
 
 ### Signal Phrase Contract
 
@@ -206,7 +220,80 @@ Hooks scan for these **exact phrases**. Agents must not paraphrase them:
 ## Agent Skills Quick Reference
 
 ### @architect (Design Phase) — execution order
-- `.github/skills/architect/service_boundary_analysis.md` — Domain boundaries, coupling check, async decoupling *(WAF: Operational Excellence)*
+- `prompts/skills/architect/service_boundary_analysis.md` — Domain boundaries, coupling check, async decoupling *(WAF: Operational Excellence)*
+- `prompts/skills/architect/observability_design.md` — CloudWatch alarms, structured logs, X-Ray tracing *(WAF: Operational Excellence)*
+- `prompts/skills/architect/reliability_design.md` — Failure modes, RTO/RPO, DLQ config, Multi-AZ *(WAF: Reliability)*
+- `prompts/skills/architect/disaster_recovery_strategy.md` — Multi-region failover, PITR, circuit breakers, DR runbook *(WAF: Reliability)*
+- `prompts/skills/architect/data_sovereignty_privacy.md` — PII isolation, data residency, retention, CMK encryption *(WAF: Security)*
+- `prompts/skills/architect/generate_cdk_boilerplate.md` — CDK v2 TypeScript stacks, tagging, private subnets
+- `prompts/skills/architect/security_group_audit.md` — IAM least privilege, encryption, networking *(WAF: Security)*
+- `prompts/skills/architect/cost_estimation.md` — Dev vs Prod sizing, idle-cost anti-patterns *(WAF: Cost)*
+- `prompts/skills/architect/legacy_integration_bridge.md` — Adapter/Facade/ACL patterns, resilience wrapping, data mapping *(WAF: Reliability)*
+- `prompts/skills/architect/adr_generation.md` — Formal ADR per decision, alternatives evaluated, reversibility rated *(WAF: Operational Excellence)*
+
+### @codeCrafter (Implementation Phase) — execution order
+- `prompts/skills/codeCrafter/api_contract_design.md` — TypeScript interfaces, endpoint specs, StandardErrorResponse *(WAF: Operational Excellence)*
+- `prompts/skills/codeCrafter/add_dependencies.md` — CVE audit, license check, exact version pinning
+- `prompts/skills/codeCrafter/secure_coding_standards.md` — Input validation (Zod/Pydantic), injection prevention, OWASP shift-left *(WAF: Security)*
+- `prompts/skills/codeCrafter/implement_logic.md` — TypeScript strict, ≤30 lines/fn, custom error classes
+- `prompts/skills/codeCrafter/error_handling_strategy.md` — Domain error hierarchy, central handler, safe error messages *(WAF: Reliability)*
+- `prompts/skills/codeCrafter/ui_component_generator.md` — Atomic Design, Tailwind, ARIA accessibility *(if UI task)*
+- `prompts/skills/codeCrafter/resilience_patterns.md` — Retry backoff, idempotency, DLQ wiring *(WAF: Reliability)*
+- `prompts/skills/codeCrafter/performance_optimization.md` — N+1 fix, pagination, caching, Lambda cold start *(WAF: Performance Efficiency)*
+- `prompts/skills/codeCrafter/refactoring_refinement.md` — DRY, SOLID, code smells, design patterns, naming *(WAF: Operational Excellence)*
+
+### @codeReviewer (Review Phase) — execution order
+- `prompts/skills/codeReviewer/architectural_alignment_audit.md` — ADR conformance, service boundary enforcement, undocumented decisions *(WAF: Operational Excellence)*
+- `prompts/skills/codeReviewer/breaking_change_detection.md` — Exported interface diffs, API payload changes, schema migrations, event contract changes *(WAF: Reliability)*
+- `prompts/skills/codeReviewer/security_surface_analysis.md` — Authorization gaps, PII in logs, IAM least privilege, injection surface, secrets *(WAF: Security)*
+- `prompts/skills/codeReviewer/complexity_check.md` — Function size, nesting depth, promise chains
+- `prompts/skills/codeReviewer/naming_audit.md` — PascalCase / camelCase / UPPER_SNAKE_CASE enforcement
+- `prompts/skills/codeReviewer/performance_regression_check.md` — N+1 queries, unbounded results, hot-path allocations, Lambda cold start, cache misses *(WAF: Performance Efficiency)*
+- `prompts/skills/codeReviewer/dependency_audit.md` — Staleness, CVE rescan, GPL license drift *(WAF: Security)*
+- `prompts/skills/codeReviewer/testability_maintainability_audit.md` — Hardcoded deps, static I/O, monolithic functions, interface coverage, fixture burden *(WAF: Operational Excellence)*
+- `prompts/skills/codeReviewer/documentation_check.md` — README, .env.example, no TODO/FIXME *(WAF: Operational Excellence)*
+
+### @qualityGuard (Quality Phase) — execution order
+- `prompts/skills/qualityGuard/automated_threat_modeling.md` — STRIDE analysis, IAM least-privilege audit, encryption check *(WAF: Security)*
+- `prompts/skills/qualityGuard/contract_testing_verification.md` — Pact consumer-driven contracts, breaking payload detection *(WAF: Reliability)*
+- `prompts/skills/qualityGuard/compliance_as_code_audit.md` — SOC 2 / PCI-DSS / GDPR checklists, log retention, drift check *(WAF: Security)*
+- `prompts/skills/qualityGuard/write_unit_tests.md` — Jest, ≥80% branch coverage, aws-sdk-client-mock
+- `prompts/skills/qualityGuard/mock_aws_responses.md` — Typed mock barrel with realistic data
+- `prompts/skills/qualityGuard/integration_test.md` — LocalStack end-to-end, DLQ flow, idempotency *(WAF: Reliability)*
+- `prompts/skills/qualityGuard/chaos_engineering_simulation.md` — Failure injection, cascade prevention, RTO/RPO assertion *(WAF: Reliability)*
+- `prompts/skills/qualityGuard/performance_benchmark_gate.md` — Artillery SLO gate, P99 regression detection, cold start check *(WAF: Performance Efficiency)*
+- `prompts/skills/qualityGuard/penetration_scan.md` — Secret scan, OWASP Top 10, PII in logs *(WAF: Security)*
+
+### @devOps (Deployment Phase) — execution order
+- `prompts/skills/devOps/pipeline_setup.md` — GitHub Actions CI/CD, OIDC auth, no long-lived keys *(WAF: Operational Excellence)*
+- `prompts/skills/devOps/deployment_strategy_engine.md` — Blue/Green or Canary selection, warm-state preservation, CodeDeploy wiring *(WAF: Reliability)*
+- `prompts/skills/devOps/finops_cost_governance.md` — Cost delta estimation, idle-cost anti-patterns, tag compliance, budget gate *(WAF: Cost Optimization)*
+- `prompts/skills/devOps/observability_provisioning.md` — CloudWatch alarms/dashboards, X-Ray tracing, log retention *(WAF: Operational Excellence)*
+- `prompts/skills/devOps/environment_promotion.md` — dev→staging→prod gates, canary routing, rollback strategy *(WAF: Reliability)*
+- `prompts/skills/devOps/deployment_verification.md` — CloudWatch alarm check, DLQ=0, canary health *(WAF: Operational Excellence)*
+- `prompts/skills/devOps/automated_rollback_logic.md` — Trigger thresholds, alias/TG flip, git revert, Last Known Good state *(WAF: Reliability)*
+- `prompts/skills/devOps/drift_detection_audit.md` — CDK diff vs live, IAM/SG drift, tag compliance, IaC enforcement *(WAF: Operational Excellence)*
+- `prompts/skills/devOps/deployment_guide.md` — Human-executable guide with exact CDK/CLI commands, verification steps, rollback plan *(MANUAL_DEPLOY_REQUESTED path)*
+
+---
+
+## Portability Notes
+
+- All skill files use root-relative paths (`prompts/skills/[agent]/[skill].md`) — no absolute paths
+- `project_state.md` and `architecture_log.md` are templates — fill `[placeholders]` during INIT_PROJECT
+- `templates/` files are auto-injected into `.github/shared/` in target repos by `src/orchestrator.py::inject_shared_templates()`
+
+---
+
+## Adding a New Agent
+
+1. Create persona file: `prompts/agents/newAgent.agent.md`
+2. Create skill folder: `prompts/skills/newAgent/`
+3. Add skill files: `ROLE & ACTIVATION` / `INPUTS` / `PROCESS` / `OUTPUT CONTRACT`
+4. Define exact signal phrase(s) in OUTPUT CONTRACT
+5. Add agent to the Agent Directory table and workflow diagram in this file
+6. Add routing section to `.github/copilot-instructions.md`
+7. Update `prompts/skills/techLead/system_prompt.md` Agent Directory
 - `.github/skills/architect/observability_design.md` — CloudWatch alarms, structured logs, X-Ray tracing *(WAF: Operational Excellence)*
 - `.github/skills/architect/reliability_design.md` — Failure modes, RTO/RPO, DLQ config, Multi-AZ *(WAF: Reliability)*
 - `.github/skills/architect/disaster_recovery_strategy.md` — Multi-region failover, PITR, circuit breakers, DR runbook *(WAF: Reliability)*

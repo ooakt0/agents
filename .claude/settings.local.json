@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(Move-Item \"k:\\\\Projects\\\\AI betterment repos\\\\agents\\\\qualituGuard\" \"k:\\\\Projects\\\\AI betterment repos\\\\agents\\\\qualityGuard\")",
-      "PowerShell(Get-ChildItem -Path \"k:\\\\Projects\\\\AI betterment repos\\\\agents\" -Recurse -File | ForEach-Object { $_.FullName.Replace\\(\"k:\\\\Projects\\\\AI betterment repos\\\\agents\\\\\", \"\"\\) } | Sort-Object)"
-    ]
-  }
-}

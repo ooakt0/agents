@@ -1,0 +1,11 @@
+# Core runtime
+fastmcp>=0.9
+langgraph>=0.2
+langchain-core>=0.2
+PyGithub>=2.3
+
+# Development / testing (optional — install with: pip install -r requirements-dev.txt)
+# pytest>=8.0
+# pytest-asyncio>=0.23
+# ruff>=0.4
+# mypy>=1.10

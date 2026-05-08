@@ -3,8 +3,8 @@ AgentHub MCP Server — stateless tool server wrapping the 6-agent LangGraph pip
 
 Usage
 -----
-  python main.py                          # stdio transport (default for Claude Code)
-  python main.py --transport=sse          # SSE transport for VS Code / Cursor
+  python src/main.py                          # stdio transport (default — Claude Code)
+  python src/main.py --transport=sse          # SSE transport for VS Code / Cursor
 
 Environment variables
 ---------------------
@@ -26,7 +26,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
-from orchestrator import AgentState, build_graph
+from src.orchestrator import AgentState, build_graph, inject_shared_templates
 
 # ---------------------------------------------------------------------------
 # Graph compiled with a checkpointer (required for interrupt / human-in-the-loop)
@@ -124,9 +124,15 @@ def execute_software_pipeline(github_repo_url: str, task_description: str) -> st
       architect → codeCrafter (clone/commit/push) → codeReviewer
       → qualityGuard (pytest) → devOps (deploy API)
 
+    Before codeCrafter runs, the pipeline checks whether the target repository
+    has a .github/shared/ directory.  If not, it injects the canonical
+    project_context.md, project_state.md, standards.md, and architecture_log.md
+    templates from the local templates/ directory so agents have a structured
+    working context immediately.
+
     If codeCrafter detects a HIGH-severity performance bottleneck in a file outside
     the current task scope, the pipeline pauses and returns a PIPELINE_PAUSED message
-    containing a thread_id. Use resume_refactor_decision to answer and continue.
+    containing a thread_id.  Use resume_refactor_decision to answer and continue.
 
     Args:
         github_repo_url:  HTTPS URL of a GitHub repository,
@@ -171,6 +177,12 @@ def execute_software_pipeline(github_repo_url: str, task_description: str) -> st
 
     final_state: AgentState = _compiled_graph.invoke(initial_state, config=config)
 
+    # Inject shared templates into the cloned repo if needed
+    repo_path = final_state.get("repo_path", "")
+    injected = inject_shared_templates(repo_path)
+    if injected:
+        print(f"[seagenthub] Injected shared templates: {', '.join(injected)}")
+
     question = _pending_interrupt(thread_id, config)
     if question:
         _active_threads[thread_id] = config
@@ -210,7 +222,6 @@ def resume_refactor_decision(thread_id: str, decision: str) -> str:
 
     normalized = decision.strip().lower()
     if normalized not in {"yes", "no", "y", "n"}:
-        # Put config back so the caller can retry with a valid answer
         _active_threads[thread_id] = config
         return "Error: decision must be 'Yes' or 'No'."
 
@@ -218,7 +229,6 @@ def resume_refactor_decision(thread_id: str, decision: str) -> str:
         Command(resume=decision), config=config
     )
 
-    # The pipeline might pause again if multiple out-of-scope bottlenecks are found
     question = _pending_interrupt(thread_id, config)
     if question:
         _active_threads[thread_id] = config
@@ -244,7 +254,7 @@ def resume_deployment_decision(thread_id: str, decision: str) -> str:
         thread_id: The thread_id from the PIPELINE_PAUSED message.
         decision:  'Approve' — @devOps runs the full automated deployment pipeline.
                    'Manual'  — @devOps generates docs/deployment_guide.md with exact
-                               commands for you to execute at your own pace. No
+                               commands for you to execute at your own pace.  No
                                automated deployment occurs.
 
     Returns:
@@ -267,7 +277,6 @@ def resume_deployment_decision(thread_id: str, decision: str) -> str:
         Command(resume=decision), config=config
     )
 
-    # The pipeline may pause again if a refactoring bottleneck is found during devOps
     question = _pending_interrupt(thread_id, config)
     if question:
         _active_threads[thread_id] = config
@@ -289,7 +298,9 @@ def resume_deployment_decision(thread_id: str, decision: str) -> str:
 # Entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """CLI entry point — installed as the ``seagenthub`` console script."""
     transport = "stdio"
     for arg in sys.argv[1:]:
         if arg.startswith("--transport="):
@@ -298,3 +309,7 @@ if __name__ == "__main__":
             transport = sys.argv[sys.argv.index(arg) + 1]
 
     mcp.run(transport=transport)
+
+
+if __name__ == "__main__":
+    main()
